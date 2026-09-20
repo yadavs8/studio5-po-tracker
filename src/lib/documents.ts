@@ -37,3 +37,11 @@ export async function documentUrl(documentId: string): Promise<string | null> {
   const { data } = await supabase.storage.from(DOCUMENT_BUCKET).createSignedUrl(doc.file_url, 300);
   return data?.signedUrl ?? null;
 }
+
+/** Undo an upload when the record it belongs to could not be saved, so no orphan files are left behind. */
+export async function discardDocument(documentId: string | null): Promise<void> {
+  if (!documentId) return;
+  const { data: doc } = await supabase.from('document').select('file_url').eq('document_id', documentId).maybeSingle();
+  if (doc) await supabase.storage.from(DOCUMENT_BUCKET).remove([doc.file_url]);
+  await supabase.from('document').delete().eq('document_id', documentId);
+}

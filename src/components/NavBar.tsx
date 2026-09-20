@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, LogOut } from 'lucide-react';
+import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, Percent, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 const NAV = [
@@ -13,6 +13,7 @@ const NAV = [
   { href: '/invoices', label: 'Tax invoices', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
   { href: '/reports', label: 'Reports', icon: FileSpreadsheet },
+  { href: '/tds', label: 'Tax credits', icon: Percent },
   { href: '/tally', label: 'Tally', icon: Landmark },
   { href: '/data-health', label: 'Data health', icon: ShieldCheck },
   { href: '/guide', label: 'Guide', icon: BookOpen },

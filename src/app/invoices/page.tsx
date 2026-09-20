@@ -17,7 +17,7 @@ import {
   FieldInput,
   FieldSelect,
   FieldFile, buttonClass } from '@/lib/ui';
-import { uploadDocument } from '@/lib/documents';
+import { uploadDocument, discardDocument } from '@/lib/documents';
 
 const DEDUCTION_TYPES: { value: DeductionType; label: string }[] = [
   { value: 'tds', label: 'Tax deducted by client (TDS)' },
@@ -216,26 +216,20 @@ function NewInvoiceForm({
     setErr(null);
     let documentId: string | null = null;
     try { documentId = await uploadDocument(file, 'invoice'); } catch (e) { setErr((e as Error).message); setSubmitting(false); return; }
-    const { data: inv, error } = await supabase.from('tax_invoice').insert({
-      document_id: documentId,
-      site_id: siteId,
-      sub_project_id: subProjectId,
-      po_id: poId || null,
-      pi_id: piId || null,
-      invoice_number: invoiceNumber.trim(),
-      invoice_date: invoiceDate,
-      taxable_value: Number(taxableValue),
-      gst_amount: Number(gstAmount) || 0,
-      gross_invoice_value: gross,
-      status: 'issued',
-    }).select().single();
-
-    if (!error && inv && piId) {
-      const { error: piErr } = await supabase.from('proforma_invoice').update({ status: 'converted_to_invoice', converted_invoice_id: inv.invoice_id }).eq('pi_id', piId);
-      if (piErr) { setSubmitting(false); setErr(`Invoice saved, but PI link failed: ${piErr.message}`); return; }
-    }
+    const { error } = await supabase.rpc('record_tax_invoice', {
+      p_site_id: siteId,
+      p_sub_project_id: subProjectId,
+      p_po_id: poId || null,
+      p_pi_id: piId || null,
+      p_invoice_number: invoiceNumber.trim(),
+      p_invoice_date: invoiceDate,
+      p_taxable: Number(taxableValue),
+      p_gst: Number(gstAmount) || 0,
+      p_gross: gross,
+      p_document_id: documentId,
+    });
     setSubmitting(false);
-    if (error) { setErr(friendlyError(error)); return; }
+    if (error) { await discardDocument(documentId); setErr(friendlyError(error)); return; }
     onCreated();
   }
 

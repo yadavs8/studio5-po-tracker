@@ -16,7 +16,7 @@ import {
   FieldInput,
   FieldSelect,
   FieldFile, buttonClass } from '@/lib/ui';
-import { uploadDocument } from '@/lib/documents';
+import { uploadDocument, discardDocument } from '@/lib/documents';
 
 const PAYMENT_TYPES: { value: PaymentType; label: string }[] = [
   { value: 'advance', label: 'Advance' },
@@ -107,7 +107,7 @@ export default function PaymentsPage() {
               <NewPaymentForm
                 siteId={siteId}
                 onCancel={() => setShowNewPayment(false)}
-                onCreated={() => { setShowNewPayment(false); loadPayments(); }}
+                onCreated={() => { setShowNewPayment(false); loadPayments(); loadOpenInvoices(); }}
               />
             )}
             {payments.length === 0 ? (
@@ -173,32 +173,46 @@ function NewPaymentForm({
   const [file, setFile] = useState<File | null>(null);
   const [poId, setPoId] = useState('');
   const [pos, setPos] = useState<{ po_id: string; po_number: string }[]>([]);
+  const [open, setOpen] = useState<InvoiceSettlementRow[]>([]);
+  const [match, setMatch] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     supabase.from('purchase_order').select('po_id, po_number').eq('site_id', siteId).order('po_date').then(({ data }) => setPos((data ?? []) as { po_id: string; po_number: string }[]));
+    supabase.from('v_invoice_settlement').select('*').eq('site_id', siteId).gt('remaining_balance', 0.5).order('invoice_number')
+      .then(({ data }) => setOpen((data ?? []) as InvoiceSettlementRow[]));
   }, [siteId]);
 
+  const total = Number(amount) || 0;
+  const matched = Object.values(match).reduce((s, v) => s + (Number(v) || 0), 0);
+  const left = total - matched;
+
   async function submit() {
-    if (!date || !amount) return;
+    if (!date || !amount) { setErr('Please enter the date and the amount received.'); return; }
+    if (left < -0.005) { setErr('You have matched more than the amount received. Please reduce the amounts matched to invoices.'); return; }
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
     try { documentId = await uploadDocument(file, 'payment_advice'); } catch (e) { setErr((e as Error).message); setSubmitting(false); return; }
-    const { error } = await supabase.from('payment').insert({
-      document_id: documentId,
-      site_id: siteId,
-      po_id: poId || null,
-      payment_date: date,
-      amount_received: Number(amount),
-      payment_type: type,
-      payment_mode: mode,
-      utr_or_reference: reference.trim() || null,
-      remarks: remarks.trim() || null,
+    const allocations = Object.entries(match)
+      .filter(([, v]) => Number(v) > 0)
+      .map(([invoice_id, v]) => ({ invoice_id, amount: Number(v) }));
+    // one all-or-nothing database call: the payment and every match are saved together, or none of them are
+    const { error } = await supabase.rpc('record_payment', {
+      p_site_id: siteId,
+      p_po_id: poId || null,
+      p_date: date,
+      p_amount: Number(amount),
+      p_type: type,
+      p_mode: mode,
+      p_reference: reference,
+      p_remarks: remarks,
+      p_document_id: documentId,
+      p_allocations: allocations,
     });
     setSubmitting(false);
-    if (error) { setErr(friendlyError(error)); return; }
+    if (error) { await discardDocument(documentId); setErr(friendlyError(error)); return; }
     onCreated();
   }
 
@@ -212,6 +226,35 @@ function NewPaymentForm({
       <FieldInput label="UTR / Reference (optional)" value={reference} onChange={setReference} />
       <FieldInput label="Remarks (optional)" value={remarks} onChange={setRemarks} placeholder="e.g. T-B,C,S1 (Inv. 022,024,025 & 027)" full />
       <FieldFile onChange={setFile} label="Payment advice (optional)" />
+
+      {open.length > 0 && (
+        <div className="col-span-2 rounded-lg border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 px-4 py-2.5">
+            <div className="font-sans text-xs font-semibold text-slate-700">Which invoices did this money pay? (optional)</div>
+            <div className="font-sans text-[11px] text-slate-400">You can match it now or later. It is saved together with the payment, so it never ends up half-done.</div>
+          </div>
+          <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto">
+            {open.map((inv) => (
+              <div key={inv.invoice_id} className="flex items-center justify-between gap-3 px-4 py-2">
+                <div className="font-sans text-sm text-slate-800">{inv.invoice_number}
+                  <span className="ml-2 font-mono text-xs text-slate-400">still to pay {formatINR(inv.remaining_balance)}</span>
+                </div>
+                <input
+                  type="number" min="0" step="0.01" placeholder="0"
+                  value={match[inv.invoice_id] ?? ''}
+                  onChange={(e) => setMatch({ ...match, [inv.invoice_id]: e.target.value })}
+                  className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right font-mono text-sm outline-none focus:border-[#1F3A52] focus:ring-2 focus:ring-[#1F3A52]/15"
+                />
+              </div>
+            ))}
+          </div>
+          <div className={`border-t border-slate-100 px-4 py-2 font-mono text-xs ${left < -0.005 ? 'text-[#A13D2B]' : 'text-slate-500'}`}>
+            {left < -0.005
+              ? `Matched ${formatINR(matched)} is MORE than received ${formatINR(total)}`
+              : `Matched ${formatINR(matched)} · left unmatched ${formatINR(Math.max(left, 0))}`}
+          </div>
+        </div>
+      )}
     </FormShell>
   );
 }

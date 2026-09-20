@@ -32,6 +32,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "autoprefixer": "^10.6.1",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "pdf-parse": "^2.4.5",

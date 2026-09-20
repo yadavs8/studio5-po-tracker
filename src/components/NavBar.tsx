@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, Percent, ListChecks, LogOut } from 'lucide-react';
+import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, Percent, ListChecks, FilePlus2, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { NotificationBar } from '@/components/NotificationBar';
 
 const NAV = [
   { href: '/dashboard', label: 'All sites', icon: LayoutDashboard },
   { href: '/master-data', label: 'Clients & sites', icon: Building2 },
+  { href: '/inbox', label: 'Add documents', icon: FilePlus2 },
   { href: '/po-pi', label: 'POs & proformas', icon: FileText },
   { href: '/invoices', label: 'Tax invoices', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },

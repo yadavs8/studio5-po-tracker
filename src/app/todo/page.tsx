@@ -27,7 +27,7 @@ export default function TodoPage() {
 
   const load = useCallback(async () => {
     const [a, b] = await Promise.all([
-      supabase.from('v_todo').select('*').order('priority').order('item_count', { ascending: false }),
+      supabase.from('v_todo_all').select('*').order('priority').order('item_count', { ascending: false }),
       supabase.from('app_task').select('*').order('done').order('sort').order('created_at'),
     ]);
     const bad = [a, b].find((r) => r.error);

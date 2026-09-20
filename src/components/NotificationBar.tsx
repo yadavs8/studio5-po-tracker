@@ -36,7 +36,7 @@ export function NotificationBar() {
   const box = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from('v_todo').select('*').order('priority').order('item_count', { ascending: false });
+    const { data, error } = await supabase.from('v_todo_all').select('*').order('priority').order('item_count', { ascending: false });
     if (!error) setItems((data ?? []) as TodoItem[]);
   }, []);
 

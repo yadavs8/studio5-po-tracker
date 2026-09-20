@@ -18,3 +18,7 @@ services:
         sync: false          # paste in the Render dashboard: your Supabase project URL
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false          # paste in the Render dashboard: the Supabase publishable (anon) key
+      - key: ANTHROPIC_API_KEY
+        sync: false          # same key your bill app uses. Switches on automatic reading of uploaded documents. Server-side only.
+      - key: EXTRACT_MODEL
+        value: claude-opus-5 # reading model. Use claude-sonnet-5 for a cheaper (slightly less careful) option.

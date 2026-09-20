@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Client, Site, SubProject } from '@/lib/types';
+import { ProgressPanel } from '@/components/ProgressPanel';
 
 export default function MasterDataPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -187,6 +188,12 @@ export default function MasterDataPage() {
           )}
         </Column>
       </div>
+
+      {selectedSite && (
+        <div className="border-t border-[#1C1C1A]/10">
+          <ProgressPanel siteId={selectedSite.site_id} siteName={selectedSite.site_name} subProjects={subProjects} />
+        </div>
+      )}
     </div>
   );
 }

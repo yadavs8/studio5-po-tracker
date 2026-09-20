@@ -1,158 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import type { SiteDashboardRow } from '@/lib/types';
-import { formatINR, formatPct } from '@/lib/format';
+import { formatINR, formatCompact, formatPct, formatDate } from '@/lib/format';
 import { PageHeader, ErrorBanner, EmptyState, DataTable, Td } from '@/lib/ui';
 
-const mockDashboardRows: SiteDashboardRow[] = [
-  {
-    site_id: 's-deh',
-    client_name: 'Lemon Tree Hotels Group',
-    site_name: 'Dehradun (Corridor + 49 Rooms)',
-    current_contract_value: 9112818,
-    total_invoiced: 9112818,
-    total_collected: 1339584,
-    normal_outstanding: 7773234,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-hos',
-    client_name: 'Lemon Tree Hotels Group',
-    site_name: 'Keys Hotel – Hosur Road, Bengaluru',
-    current_contract_value: 6527660,
-    total_invoiced: 6527660,
-    total_collected: 6210930,
-    normal_outstanding: 316730,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-koc',
-    client_name: 'Lemon Tree Hotels Group',
-    site_name: 'Keys Hotel – Kochi',
-    current_contract_value: 8380534,
-    total_invoiced: 8380534,
-    total_collected: 7956732,
-    normal_outstanding: 423802,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-pgn',
-    client_name: 'Lemon Tree Hotels Group',
-    site_name: 'Lemon Tree – PGN-1, Gurugram',
-    current_contract_value: 7445592,
-    total_invoiced: 7445592,
-    total_collected: 7301466,
-    normal_outstanding: 144126,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-rfx',
-    client_name: 'Lemon Tree Hotels Group',
-    site_name: 'Red Fox Hotel – Mayur Vihar, East Delhi',
-    current_contract_value: 7884499,
-    total_invoiced: 7884499,
-    total_collected: 8201705,
-    normal_outstanding: 317206,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-dss-tb',
-    client_name: 'DSS Buildtech Pvt. Ltd.',
-    site_name: 'Tower B – Modular Kitchen',
-    current_contract_value: 5638512,
-    total_invoiced: 6174822,
-    total_collected: 5424282,
-    normal_outstanding: 750540,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-dss-tg',
-    client_name: 'DSS Buildtech Pvt. Ltd.',
-    site_name: 'Tower G – Modular Kitchen',
-    current_contract_value: 5184330,
-    total_invoiced: 5650576,
-    total_collected: 5478223,
-    normal_outstanding: 172353,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-dss-ts1',
-    client_name: 'DSS Buildtech Pvt. Ltd.',
-    site_name: 'Tower S1 – Modular Kitchen',
-    current_contract_value: 4156035,
-    total_invoiced: 4271794,
-    total_collected: 3860727,
-    normal_outstanding: 411067,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-dss-tc',
-    client_name: 'DSS Buildtech Pvt. Ltd.',
-    site_name: 'Tower C – Modular Kitchen (10% Handover Pending)',
-    current_contract_value: 1394760,
-    total_invoiced: 1394760,
-    total_collected: 1276560,
-    normal_outstanding: 118200,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-dss-ward',
-    client_name: 'DSS Buildtech Pvt. Ltd.',
-    site_name: 'Wardrobes – Tower A, D, E & F',
-    current_contract_value: 3507065,
-    total_invoiced: 3507065,
-    total_collected: 3017477,
-    normal_outstanding: 489588,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-  {
-    site_id: 's-htw',
-    client_name: 'Silverglades Infra Pvt. Ltd.',
-    site_name: 'High Town – Modular Kitchen & Vanities (Tower A)',
-    current_contract_value: 11157240,
-    total_invoiced: 3590098,
-    total_collected: 4824886,
-    normal_outstanding: 6990424,
-    retention_outstanding: 0,
-    advance_balance: 657170,
-    billing_progress_pct: 32,
-  },
-  {
-    site_id: 's-cor',
-    client_name: 'Coronet Hotel Services Pvt. Ltd.',
-    site_name: 'Tarudhan Valley Resort – Renovation & Fit-Out',
-    current_contract_value: 3581303,
-    total_invoiced: 3581303,
-    total_collected: 1500000,
-    normal_outstanding: 2081303,
-    retention_outstanding: 0,
-    advance_balance: 0,
-    billing_progress_pct: 100,
-  },
-];
-
+// Every figure below comes straight from v_site_dashboard, which is derived from
+// tax_invoice, payment_allocation and deduction. Nothing is typed in or defaulted here.
 export default function DashboardPage() {
   const [rows, setRows] = useState<SiteDashboardRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -164,12 +20,8 @@ export default function DashboardPage() {
       .select('*')
       .order('normal_outstanding', { ascending: false })
       .then(({ data, error }) => {
-        if (error || !data || data.length === 0) {
-          // Use real fallback data from SOP files
-          setRows(mockDashboardRows);
-        } else {
-          setRows(data as SiteDashboardRow[]);
-        }
+        if (error) setError(error.message);
+        else setRows((data ?? []) as SiteDashboardRow[]);
         setLoading(false);
       });
   }, []);
@@ -189,20 +41,19 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#FAFAF8]">
       <PageHeader
-        title="Studio5 — Company Overview"
-        subtitle="Every number here is calculated live from invoices, payments and deductions. Nothing is entered by hand at this level."
+        title="All sites at a glance"
+        subtitle="Every number is calculated from the POs, invoices, payments and deductions you enter. Click a site to see each PO with its PIs, tax invoices and money received."
       />
       {error && <ErrorBanner message={error} />}
 
       <div className="px-8 py-6">
-        {/* SUMMARY STRIP */}
-        <div className="mb-8 grid grid-cols-6 gap-px border border-[#1C1C1A]/10 bg-[#1C1C1A]/10">
-          <SummaryTile label="Contract Value" value={formatINR(totals.contract)} />
-          <SummaryTile label="Total Invoiced" value={formatINR(totals.invoiced)} />
-          <SummaryTile label="Total Collected" value={formatINR(totals.collected)} />
-          <SummaryTile label="Outstanding" value={formatINR(totals.outstanding)} accent="#A13D2B" />
-          <SummaryTile label="Retention Held" value={formatINR(totals.retention)} accent="#B8860B" />
-          <SummaryTile label="Advance Balance" value={formatINR(totals.advance)} />
+        <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+          <SummaryTile label="PO value (with GST)" note="only POs entered so far" amount={totals.contract} accent="#1F3A52" />
+          <SummaryTile label="Billed so far" note="incl. invoices with no PO entered yet" amount={totals.invoiced} accent="#1F3A52" />
+          <SummaryTile label="Money received in bank" amount={totals.collected} accent="#2F6B4F" />
+          <SummaryTile label="Billed, waiting for payment" note="client owes this today" amount={totals.outstanding} accent="#A13D2B" />
+          <SummaryTile label="Held back until handover" note="not overdue - kept separate" amount={totals.retention} accent="#B8860B" />
+          <SummaryTile label="Advance not yet used" amount={totals.advance} accent="#6B7B8C" />
         </div>
 
         {loading ? (
@@ -215,18 +66,18 @@ export default function DashboardPage() {
               columns={[
                 { label: 'Client' },
                 { label: 'Site' },
-                { label: 'Contract', align: 'right' },
-                { label: 'Invoiced', align: 'right' },
-                { label: 'Collected', align: 'right' },
-                { label: 'Outstanding', align: 'right' },
-                { label: 'Retention', align: 'right' },
-                { label: 'Billing %', align: 'right' },
+                { label: 'PO value', align: 'right' },
+                { label: 'Billed', align: 'right' },
+                { label: 'Received', align: 'right' },
+                { label: 'Waiting for payment', align: 'right' },
+                { label: 'Held till handover', align: 'right' },
+                { label: 'Billed vs work done' },
               ]}
             >
               {rows.map((r) => (
                 <tr key={r.site_id}>
                   <Td>{r.client_name}</Td>
-                  <Td>{r.site_name}</Td>
+                  <Td><Link href={`/sites/${r.site_id}`} className="font-medium text-[#1F3A52] underline decoration-[#1F3A52]/30 hover:decoration-[#1F3A52]">{r.site_name}</Link></Td>
                   <Td align="right" mono>{formatINR(r.current_contract_value)}</Td>
                   <Td align="right" mono>{formatINR(r.total_invoiced)}</Td>
                   <Td align="right" mono>{formatINR(r.total_collected)}</Td>
@@ -240,7 +91,9 @@ export default function DashboardPage() {
                       {formatINR(r.retention_outstanding)}
                     </span>
                   </Td>
-                  <Td align="right" mono>{formatPct(r.billing_progress_pct)}</Td>
+                  <Td>
+                    <ProgressPair billing={r.billing_progress_pct} physical={r.physical_progress_pct} physicalDate={r.physical_progress_date} />
+                  </Td>
                 </tr>
               ))}
             </DataTable>
@@ -251,13 +104,36 @@ export default function DashboardPage() {
   );
 }
 
-function SummaryTile({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function SummaryTile({ label, amount, accent, note }: { label: string; amount: number; accent: string; note?: string }) {
   return (
-    <div className="bg-[#FAFAF8] px-5 py-4">
-      <div className="font-sans text-xs text-[#1C1C1A]/50">{label}</div>
-      <div className="mt-1 font-mono text-lg font-medium" style={{ color: accent ?? '#1C1C1A' }}>
-        {value}
+    <div className="min-w-0 border border-[#1C1C1A]/10 bg-white px-5 py-4 shadow-[0_1px_0_rgba(28,28,26,0.04)]" style={{ borderTop: `3px solid ${accent}` }}>
+      <div className="font-sans text-[11px] font-semibold uppercase tracking-wider text-[#1C1C1A]/50">{label}</div>
+      <div className="mt-2 whitespace-nowrap font-mono text-2xl font-medium tabular-nums" style={{ color: accent }}>{formatCompact(amount)}</div>
+      <div className="mt-1 whitespace-nowrap font-mono text-[11px] tabular-nums text-[#1C1C1A]/45" title="Exact amount">{formatINR(amount)}</div>
+      <div className="mt-1 h-4 font-sans text-[11px] text-[#1C1C1A]/40">{note ?? ''}</div>
+    </div>
+  );
+}
+
+function Bar({ label, pct, color }: { label: string; pct: number | null; color: string }) {
+  const w = pct === null ? 0 : Math.max(0, Math.min(100, pct));
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-14 font-sans text-[10px] uppercase tracking-wider text-[#1C1C1A]/45">{label}</span>
+      <div className="h-1.5 w-32 bg-[#1C1C1A]/10">
+        <div className="h-full" style={{ width: `${w}%`, backgroundColor: color }} />
       </div>
+      <span className="w-14 text-right font-mono text-xs tabular-nums text-[#1C1C1A]/70">{formatPct(pct)}</span>
+    </div>
+  );
+}
+
+// Billing and physical progress are two different measures — shown side by side, never merged.
+function ProgressPair({ billing, physical, physicalDate }: { billing: number | null; physical: number | null; physicalDate: string | null }) {
+  return (
+    <div className="space-y-1" title={physicalDate ? `Physical progress as of ${formatDate(physicalDate)}` : 'No physical progress logged'}>
+      <Bar label="Billed" pct={billing} color="#1F3A52" />
+      <Bar label="Work done" pct={physical} color="#B8860B" />
     </div>
   );
 }

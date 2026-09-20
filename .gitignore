@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# real business figures - keep these on this computer only, never on GitHub
+supabase/load_data.sql
+supabase/build_load.py
+scratch_*

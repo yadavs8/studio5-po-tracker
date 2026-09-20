@@ -8,9 +8,14 @@ import React from 'react';
 
 export function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <header className="border-b border-[#1C1C1A]/10 px-8 py-6">
-      <h1 className="font-serif text-2xl tracking-tight text-[#1C1C1A]">{title}</h1>
-      <p className="mt-1 font-sans text-sm text-[#1C1C1A]/60">{subtitle}</p>
+    <header className="border-b border-[#1C1C1A]/10 bg-white px-8 py-7">
+      <div className="flex items-stretch gap-4">
+        <div className="w-1 bg-[#1F3A52]" />
+        <div>
+          <h1 className="font-serif text-3xl font-semibold tracking-tight text-[#1C1C1A]">{title}</h1>
+          <p className="mt-1.5 max-w-3xl font-sans text-sm leading-relaxed text-[#1C1C1A]/60">{subtitle}</p>
+        </div>
+      </div>
     </header>
   );
 }
@@ -33,9 +38,9 @@ export function EmptyState({ text }: { text: string }) {
 
 export function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="border border-[#1C1C1A]/10 bg-white">
-      <div className="flex items-center justify-between border-b border-[#1C1C1A]/10 px-6 py-4">
-        <h2 className="font-sans text-sm font-medium text-[#1C1C1A]/70">{title}</h2>
+    <div className="border border-[#1C1C1A]/10 bg-white shadow-[0_1px_0_rgba(28,28,26,0.04)]">
+      <div className="flex items-center justify-between border-b border-[#1C1C1A]/10 px-6 py-3.5">
+        <h2 className="font-sans text-xs font-semibold uppercase tracking-wider text-[#1F3A52]">{title}</h2>
         {action}
       </div>
       {children}
@@ -51,11 +56,11 @@ export function DataTable({ columns, children }: { columns: { label: string; ali
   return (
     <table className="w-full">
       <thead>
-        <tr className="border-b border-[#1C1C1A]/10 bg-[#1C1C1A]/[0.02]">
+        <tr className="border-b-2 border-[#1F3A52]/20 bg-[#1F3A52]/[0.04]">
           {columns.map((c) => (
             <th
               key={c.label}
-              className={`px-4 py-2.5 font-sans text-xs font-medium text-[#1C1C1A]/50 ${
+              className={`px-4 py-2.5 font-sans text-[11px] font-semibold uppercase tracking-wider text-[#1F3A52]/70 ${
                 c.align === 'right' ? 'text-right' : 'text-left'
               }`}
             >
@@ -64,7 +69,7 @@ export function DataTable({ columns, children }: { columns: { label: string; ali
           ))}
         </tr>
       </thead>
-      <tbody>{children}</tbody>
+      <tbody className="[&>tr:hover]:bg-[#1F3A52]/[0.03]">{children}</tbody>
     </table>
   );
 }
@@ -116,16 +121,19 @@ export function FormShell({
   onCancel,
   onSubmit,
   submitting,
+  error,
   children,
 }: {
   onCancel: () => void;
   onSubmit: () => void;
   submitting: boolean;
+  error?: string | null;
   children: React.ReactNode;
 }) {
   return (
     <div className="border-b border-[#1C1C1A]/10 bg-[#1C1C1A]/[0.02] px-6 py-4">
       <div className="grid grid-cols-2 gap-3">{children}</div>
+      {error && <div className="mt-3 font-sans text-sm text-[#A13D2B]">{error}</div>}
       <div className="mt-4 flex gap-2">
         <button
           onClick={onSubmit}
@@ -202,6 +210,28 @@ export function FieldSelect({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+export function FieldFile({
+  label = 'Document (optional)',
+  onChange,
+  full = true,
+}: {
+  label?: string;
+  onChange: (f: File | null) => void;
+  full?: boolean;
+}) {
+  return (
+    <div className={full ? 'col-span-2' : ''}>
+      <label className="block font-sans text-xs font-medium text-[#1C1C1A]/60">{label}</label>
+      <input
+        type="file"
+        accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx"
+        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+        className="mt-1 block w-full border border-[#1C1C1A]/15 bg-white px-3 py-1.5 font-sans text-sm file:mr-3 file:border-0 file:bg-[#1F3A52]/10 file:px-3 file:py-1 file:font-sans file:text-xs file:text-[#1F3A52]"
+      />
     </div>
   );
 }

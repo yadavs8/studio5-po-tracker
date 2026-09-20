@@ -1,5 +1,5 @@
 {
-  "name": "studio5-portal",
+  "name": "studio5-project-tracker",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -39,5 +39,8 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

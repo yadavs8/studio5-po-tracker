@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { friendlyError } from '@/lib/plain';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -15,7 +16,9 @@ import {
   FormShell,
   FieldInput,
   FieldSelect,
+  FieldFile,
 } from '@/lib/ui';
+import { uploadDocument } from '@/lib/documents';
 
 export default function PoPiPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -34,7 +37,7 @@ export default function PoPiPage() {
 
   useEffect(() => {
     supabase.from('client').select('*').order('display_name').then(({ data, error }) => {
-      if (error) setError(error.message);
+      if (error) setError(friendlyError(error));
       else setClients(data as Client[]);
     });
   }, []);
@@ -42,7 +45,7 @@ export default function PoPiPage() {
   useEffect(() => {
     if (!clientId) { setSites([]); setSiteId(''); return; }
     supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data, error }) => {
-      if (error) setError(error.message);
+      if (error) setError(friendlyError(error));
       else setSites(data as Site[]);
     });
   }, [clientId]);
@@ -60,7 +63,7 @@ export default function PoPiPage() {
 
   function loadSubProjects() {
     supabase.from('sub_project').select('*').eq('site_id', siteId).order('name').then(({ data, error }) => {
-      if (error) setError(error.message);
+      if (error) setError(friendlyError(error));
       else setSubProjects(data as SubProject[]);
     });
   }
@@ -69,7 +72,7 @@ export default function PoPiPage() {
     let q = supabase.from('purchase_order').select('*').eq('site_id', siteId);
     q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
     q.order('po_date', { ascending: false }).then(({ data, error }) => {
-      if (error) setError(error.message);
+      if (error) setError(friendlyError(error));
       else setPos(data as PurchaseOrder[]);
     });
   }
@@ -78,7 +81,7 @@ export default function PoPiPage() {
     let q = supabase.from('proforma_invoice').select('*').eq('site_id', siteId);
     q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
     q.order('pi_date', { ascending: false }).then(({ data, error }) => {
-      if (error) setError(error.message);
+      if (error) setError(friendlyError(error));
       else setPis(data as ProformaInvoice[]);
     });
   }
@@ -212,12 +215,18 @@ function NewPoForm({
   const [poDate, setPoDate] = useState('');
   const [scope, setScope] = useState('');
   const [totalValue, setTotalValue] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
     if (!poNumber.trim() || !poDate || !totalValue) return;
     setSubmitting(true);
-    await supabase.from('purchase_order').insert({
+    setErr(null);
+    let documentId: string | null = null;
+    try { documentId = await uploadDocument(file, 'po'); } catch (e) { setErr((e as Error).message); setSubmitting(false); return; }
+    const { error } = await supabase.from('purchase_order').insert({
+      document_id: documentId,
       site_id: siteId,
       sub_project_id: subProjectId,
       po_number: poNumber.trim(),
@@ -227,15 +236,17 @@ function NewPoForm({
       status: 'active',
     });
     setSubmitting(false);
+    if (error) { setErr(friendlyError(error)); return; }
     onCreated();
   }
 
   return (
-    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting}>
+    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting} error={err}>
       <FieldInput label="PO Number" value={poNumber} onChange={setPoNumber} placeholder="e.g. PDCL/LTHDN/2026/016" />
       <FieldInput label="PO Date" type="date" value={poDate} onChange={setPoDate} />
       <FieldInput label="Scope" value={scope} onChange={setScope} placeholder="e.g. Corridor 4th Floor" full />
       <FieldInput label="Total value (with GST)" type="number" value={totalValue} onChange={setTotalValue} />
+      <FieldFile onChange={setFile} />
     </FormShell>
   );
 }
@@ -258,12 +269,18 @@ function NewPiForm({
   const [amount, setAmount] = useState('');
   const [poId, setPoId] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
     if (!piNumber.trim() || !piDate || !amount) return;
     setSubmitting(true);
-    await supabase.from('proforma_invoice').insert({
+    setErr(null);
+    let documentId: string | null = null;
+    try { documentId = await uploadDocument(file, 'pi'); } catch (e) { setErr((e as Error).message); setSubmitting(false); return; }
+    const { error } = await supabase.from('proforma_invoice').insert({
+      document_id: documentId,
       site_id: siteId,
       sub_project_id: subProjectId,
       po_id: poId || null,
@@ -274,16 +291,18 @@ function NewPiForm({
       status: 'draft',
     });
     setSubmitting(false);
+    if (error) { setErr(friendlyError(error)); return; }
     onCreated();
   }
 
   return (
-    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting}>
+    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting} error={err}>
       <FieldInput label="PI Number" value={piNumber} onChange={setPiNumber} placeholder="e.g. S5I/25-26/02/06" />
       <FieldInput label="PI Date" type="date" value={piDate} onChange={setPiDate} />
       <FieldInput label="Amount" type="number" value={amount} onChange={setAmount} />
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
       <FieldInput label="Remarks" value={remarks} onChange={setRemarks} placeholder="e.g. Tower B Installation of Kitchen" full />
+      <FieldFile onChange={setFile} />
     </FormShell>
   );
 }

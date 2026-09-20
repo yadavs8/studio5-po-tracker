@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { friendlyError } from '@/lib/plain';
 import type { Client, Site, Payment, InvoiceSettlementRow, PaymentType, PaymentMode } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -14,7 +15,9 @@ import {
   FormShell,
   FieldInput,
   FieldSelect,
+  FieldFile,
 } from '@/lib/ui';
+import { uploadDocument } from '@/lib/documents';
 
 const PAYMENT_TYPES: { value: PaymentType; label: string }[] = [
   { value: 'advance', label: 'Advance' },
@@ -44,7 +47,7 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     supabase.from('client').select('*').order('display_name').then(({ data, error }) => {
-      if (error) setError(error.message); else setClients(data as Client[]);
+      if (error) setError(friendlyError(error)); else setClients(data as Client[]);
     });
   }, []);
 
@@ -61,7 +64,7 @@ export default function PaymentsPage() {
 
   function loadPayments() {
     supabase.from('payment').select('*').eq('site_id', siteId).order('payment_date', { ascending: false }).then(async ({ data, error }) => {
-      if (error) { setError(error.message); return; }
+      if (error) { setError(friendlyError(error)); return; }
       const pays = data as Payment[];
       setPayments(pays);
       if (pays.length > 0) {
@@ -75,7 +78,7 @@ export default function PaymentsPage() {
 
   function loadOpenInvoices() {
     supabase.from('v_invoice_settlement').select('*').eq('site_id', siteId).gt('remaining_balance', 0).then(({ data, error }) => {
-      if (error) setError(error.message); else setOpenInvoices(data as InvoiceSettlementRow[]);
+      if (error) setError(friendlyError(error)); else setOpenInvoices(data as InvoiceSettlementRow[]);
     });
   }
 
@@ -168,13 +171,26 @@ function NewPaymentForm({
   const [mode, setMode] = useState<PaymentMode>('bank_transfer');
   const [reference, setReference] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [poId, setPoId] = useState('');
+  const [pos, setPos] = useState<{ po_id: string; po_number: string }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    supabase.from('purchase_order').select('po_id, po_number').eq('site_id', siteId).order('po_date').then(({ data }) => setPos((data ?? []) as { po_id: string; po_number: string }[]));
+  }, [siteId]);
 
   async function submit() {
     if (!date || !amount) return;
     setSubmitting(true);
-    await supabase.from('payment').insert({
+    setErr(null);
+    let documentId: string | null = null;
+    try { documentId = await uploadDocument(file, 'payment_advice'); } catch (e) { setErr((e as Error).message); setSubmitting(false); return; }
+    const { error } = await supabase.from('payment').insert({
+      document_id: documentId,
       site_id: siteId,
+      po_id: poId || null,
       payment_date: date,
       amount_received: Number(amount),
       payment_type: type,
@@ -183,17 +199,20 @@ function NewPaymentForm({
       remarks: remarks.trim() || null,
     });
     setSubmitting(false);
+    if (error) { setErr(friendlyError(error)); return; }
     onCreated();
   }
 
   return (
-    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting}>
+    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting} error={err}>
       <FieldInput label="Payment Date" type="date" value={date} onChange={setDate} />
       <FieldInput label="Amount Received" type="number" value={amount} onChange={setAmount} />
       <FieldSelect label="Payment Type" value={type} onChange={(v) => setType(v as PaymentType)} options={PAYMENT_TYPES} />
       <FieldSelect label="Mode" value={mode} onChange={(v) => setMode(v as PaymentMode)} options={PAYMENT_MODES} />
+      <FieldSelect label="Received against PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} full />
       <FieldInput label="UTR / Reference (optional)" value={reference} onChange={setReference} />
       <FieldInput label="Remarks (optional)" value={remarks} onChange={setRemarks} placeholder="e.g. T-B,C,S1 (Inv. 022,024,025 & 027)" full />
+      <FieldFile onChange={setFile} label="Payment advice (optional)" />
     </FormShell>
   );
 }
@@ -212,6 +231,7 @@ function AllocationDrawer({
   onAllocated: () => void;
 }) {
   const [allocations, setAllocations] = useState<Record<string, string>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const totalEntered = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
@@ -226,7 +246,10 @@ function AllocationDrawer({
         invoice_id,
         amount_allocated: Number(v),
       }));
-    if (rows.length > 0) await supabase.from('payment_allocation').insert(rows);
+    if (rows.length > 0) {
+      const { error } = await supabase.from('payment_allocation').insert(rows);
+      if (error) { setSubmitting(false); setSaveError(friendlyError(error)); return; }
+    }
     setSubmitting(false);
     onAllocated();
     onClose();
@@ -269,6 +292,7 @@ function AllocationDrawer({
       )}
 
       <div className="flex items-center justify-between border-t border-[#1C1C1A]/10 px-6 py-4">
+        {saveError && <span className="font-sans text-sm text-[#A13D2B]">{saveError}</span>}
         <span className={`font-mono text-xs ${remaining < 0 ? 'text-[#A13D2B]' : 'text-[#1C1C1A]/50'}`}>
           {remaining < 0 ? 'Allocation exceeds unallocated amount' : `${formatINR(remaining)} will remain unallocated`}
         </span>

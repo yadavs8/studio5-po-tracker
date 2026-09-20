@@ -137,6 +137,8 @@ export interface SiteDashboardRow {
   retention_outstanding: number;
   advance_balance: number;
   billing_progress_pct: number | null;
+  physical_progress_pct: number | null;
+  physical_progress_date: string | null;
 }
 
 export interface InvoiceSettlementRow {

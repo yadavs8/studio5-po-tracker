@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { friendlyError } from '@/lib/plain';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice, TaxInvoice, Deduction, InvoiceSettlementRow, DeductionType } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -15,15 +16,17 @@ import {
   FormShell,
   FieldInput,
   FieldSelect,
+  FieldFile,
 } from '@/lib/ui';
+import { uploadDocument } from '@/lib/documents';
 
 const DEDUCTION_TYPES: { value: DeductionType; label: string }[] = [
-  { value: 'tds', label: 'TDS' },
-  { value: 'gst_tds', label: 'GST-TDS' },
-  { value: 'retention', label: 'Retention' },
-  { value: 'handover_hold', label: 'Handover Hold' },
-  { value: 'penalty', label: 'Penalty' },
-  { value: 'discount', label: 'Discount' },
+  { value: 'tds', label: 'Tax deducted by client (TDS)' },
+  { value: 'gst_tds', label: 'GST tax deducted (GST-TDS)' },
+  { value: 'retention', label: 'Held back for a set period (retention)' },
+  { value: 'handover_hold', label: 'Held back until site handover' },
+  { value: 'penalty', label: 'Penalty charged by client' },
+  { value: 'discount', label: 'Discount given' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -46,14 +49,14 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     supabase.from('client').select('*').order('display_name').then(({ data, error }) => {
-      if (error) setError(error.message); else setClients(data as Client[]);
+      if (error) setError(friendlyError(error)); else setClients(data as Client[]);
     });
   }, []);
 
   useEffect(() => {
     if (!clientId) { setSites([]); setSiteId(''); return; }
     supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data, error }) => {
-      if (error) setError(error.message); else setSites(data as Site[]);
+      if (error) setError(friendlyError(error)); else setSites(data as Site[]);
     });
   }, [clientId]);
 
@@ -69,7 +72,7 @@ export default function InvoicesPage() {
     let q = supabase.from('tax_invoice').select('*').eq('site_id', siteId);
     q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
     q.order('invoice_date', { ascending: false }).then(async ({ data, error }) => {
-      if (error) { setError(error.message); return; }
+      if (error) { setError(friendlyError(error)); return; }
       const invs = data as TaxInvoice[];
       setInvoices(invs);
       if (invs.length > 0) {
@@ -195,14 +198,27 @@ function NewInvoiceForm({
   const [gstAmount, setGstAmount] = useState('');
   const [poId, setPoId] = useState('');
   const [piId, setPiId] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const gross = (Number(taxableValue) || 0) + (Number(gstAmount) || 0);
+  const [poLeft, setPoLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!poId) { setPoLeft(null); return; }
+    supabase.from('v_po_summary').select('yet_to_invoice').eq('po_id', poId).maybeSingle()
+      .then(({ data }) => setPoLeft(data ? Number(data.yet_to_invoice) : null));
+  }, [poId]);
+  const overPo = poLeft !== null && gross > poLeft + 0.5;
 
   async function submit() {
     if (!invoiceNumber.trim() || !invoiceDate || !taxableValue) return;
     setSubmitting(true);
+    setErr(null);
+    let documentId: string | null = null;
+    try { documentId = await uploadDocument(file, 'invoice'); } catch (e) { setErr((e as Error).message); setSubmitting(false); return; }
     const { data: inv, error } = await supabase.from('tax_invoice').insert({
+      document_id: documentId,
       site_id: siteId,
       sub_project_id: subProjectId,
       po_id: poId || null,
@@ -216,21 +232,31 @@ function NewInvoiceForm({
     }).select().single();
 
     if (!error && inv && piId) {
-      await supabase.from('proforma_invoice').update({ status: 'converted_to_invoice', converted_invoice_id: inv.invoice_id }).eq('pi_id', piId);
+      const { error: piErr } = await supabase.from('proforma_invoice').update({ status: 'converted_to_invoice', converted_invoice_id: inv.invoice_id }).eq('pi_id', piId);
+      if (piErr) { setSubmitting(false); setErr(`Invoice saved, but PI link failed: ${piErr.message}`); return; }
     }
     setSubmitting(false);
+    if (error) { setErr(friendlyError(error)); return; }
     onCreated();
   }
 
   return (
-    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting}>
+    <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting} error={err}>
       <FieldInput label="Invoice Number" value={invoiceNumber} onChange={setInvoiceNumber} placeholder="e.g. S5I/24-25/022" />
       <FieldInput label="Invoice Date" type="date" value={invoiceDate} onChange={setInvoiceDate} />
       <FieldInput label="Taxable Value" type="number" value={taxableValue} onChange={setTaxableValue} />
       <FieldInput label="GST Amount" type="number" value={gstAmount} onChange={setGstAmount} />
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
       <FieldSelect label="Linked PI (optional)" value={piId} onChange={setPiId} options={pis.map((p) => ({ value: p.pi_id, label: p.pi_number }))} />
-      <div className="col-span-2 font-mono text-sm text-[#1C1C1A]/60">Gross value: {formatINR(gross)}</div>
+      <FieldFile onChange={setFile} />
+      <div className="col-span-2 font-mono text-sm text-[#1C1C1A]/60">Invoice total (taxable + GST): {formatINR(gross)}</div>
+      {poLeft !== null && (
+        <div className={`col-span-2 font-sans text-xs ${overPo ? 'text-[#A13D2B]' : 'text-[#1C1C1A]/50'}`}>
+          {overPo
+            ? `Careful: this invoice is ${formatINR(gross - poLeft)} MORE than what is left to bill on this PO (${formatINR(poLeft)} left). Check the amount, or that it is the right PO.`
+            : `${formatINR(poLeft)} is still left to bill on this PO; after this invoice ${formatINR(poLeft - gross)} will be left.`}
+        </div>
+      )}
     </FormShell>
   );
 }
@@ -248,11 +274,13 @@ function DeductionPanel({
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [dedErr, setDedErr] = useState<string | null>(null);
 
   async function submit() {
-    if (!type || !amount) return;
+    if (!type || !amount) { setDedErr('Please choose the type and enter the amount.'); return; }
     setSubmitting(true);
-    await supabase.from('deduction').insert({
+    setDedErr(null);
+    const { error: dedError } = await supabase.from('deduction').insert({
       invoice_id: invoiceId,
       deduction_type: type,
       amount: Number(amount),
@@ -260,6 +288,7 @@ function DeductionPanel({
       status: 'pending',
     });
     setSubmitting(false);
+    if (dedError) { setDedErr(friendlyError(dedError)); return; }
     setType(''); setAmount(''); setNote('');
     onSaved();
   }
@@ -284,6 +313,7 @@ function DeductionPanel({
           {submitting ? 'Saving…' : 'Add Deduction'}
         </button>
       </div>
+      {dedErr && <div className="mt-2 font-sans text-sm text-[#A13D2B]">{dedErr}</div>}
     </div>
   );
 }

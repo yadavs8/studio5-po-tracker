@@ -44,3 +44,6 @@ next-env.d.ts
 supabase/load_data.sql
 supabase/build_load.py
 scratch_*
+
+# Tally agent
+tally-agent/node_modules

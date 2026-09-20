@@ -1,0 +1,15 @@
+{
+  "name": "studio5-tally-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Runs on the PC where Tally Prime is open. Posts entries queued in the Studio5 Project Tracker into Tally.",
+  "scripts": {
+    "start": "node --env-file=.env agent.js",
+    "live": "node --env-file=.env live.js",
+    "watch": "node --env-file=.env watch.js",
+    "test": "node test-voucher.js"
+  },
+  "engines": { "node": ">=20.6" },
+  "dependencies": { "@supabase/supabase-js": "^2.116.0" }
+}

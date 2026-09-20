@@ -13,6 +13,7 @@ const NAV = [
   { href: '/invoices', label: 'Tax invoices', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
   { href: '/reports', label: 'Reports', icon: FileSpreadsheet },
+  { href: '/tally', label: 'Tally', icon: Landmark },
   { href: '/data-health', label: 'Data health', icon: ShieldCheck },
   { href: '/guide', label: 'Guide', icon: BookOpen },
 ];

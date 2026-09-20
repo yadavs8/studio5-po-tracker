@@ -16,8 +16,7 @@ import {
   FormShell,
   FieldInput,
   FieldSelect,
-  FieldFile,
-} from '@/lib/ui';
+  FieldFile, buttonClass } from '@/lib/ui';
 import { uploadDocument } from '@/lib/documents';
 
 const DEDUCTION_TYPES: { value: DeductionType; label: string }[] = [
@@ -95,7 +94,7 @@ export default function InvoicesPage() {
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
+    <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader title="Tax Invoices" subtitle="Every invoice's settlement status is calculated automatically from payments allocated and deductions recorded — never set by hand." />
       {error && <ErrorBanner message={error} />}
 
@@ -114,7 +113,7 @@ export default function InvoicesPage() {
           <Panel
             title={`Invoices (${invoices.length})`}
             action={
-              <button onClick={() => setShowNewInvoice(true)} className="border border-[#1F3A52] px-3 py-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">
+              <button onClick={() => setShowNewInvoice(true)} className={buttonClass}>
                 + Add Invoice
               </button>
             }
@@ -148,7 +147,7 @@ export default function InvoicesPage() {
                         <Td>
                           <button
                             onClick={() => setDeductionFormInvoiceId(deductionFormInvoiceId === inv.invoice_id ? null : inv.invoice_id)}
-                            className="font-sans text-xs text-[#1F3A52] underline"
+                            className="rounded-md bg-[#1F3A52]/8 px-3 py-1 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white"
                           >
                             {dCount > 0 ? `${dCount} deduction${dCount > 1 ? 's' : ''}` : '+ Deduction'}
                           </button>

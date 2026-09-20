@@ -26,7 +26,7 @@ const TERMS: [string, string][] = [
 
 export default function GuidePage() {
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
+    <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader
         title="How this works"
         subtitle="Written for someone who does not know accounting. Read once, and every screen will make sense."

@@ -6,7 +6,8 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { documentUrl } from '@/lib/documents';
 import { formatINR, formatCompact, formatDate, formatPct } from '@/lib/format';
-import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge } from '@/lib/ui';
+import { FileText, Receipt, Wallet, Hourglass, Clock, ShieldCheck, FileSpreadsheet, ArrowLeft, Building2 } from 'lucide-react';
+import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, buttonClassOnDark } from '@/lib/ui';
 import { WORDS, HELP } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
 
@@ -94,28 +95,27 @@ export default function SitePage() {
   const siteProgress = dash?.physical_progress_pct ?? null;
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
+    <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader
+        icon={<Building2 size={24} className="text-[#E8C872]" />}
+        actions={<Link href={`/sites/${id}/statement`} className={buttonClassOnDark}><FileSpreadsheet size={14} /> Account statement (print / Excel)</Link>}
         title={site?.site_name ?? 'Site'}
         subtitle={site ? `${site.client} — every PO for this site, with its proforma invoices, tax invoices, money received and what is left.` : ''}
       />
       {error && <ErrorBanner message={error} />}
       <div className="px-8 py-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <Link href="/dashboard" className="font-sans text-xs text-[#1F3A52] underline">← All sites</Link>
-          <Link href={`/sites/${id}/statement`} className="border border-[#1F3A52] px-3 py-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">Account statement (print / Excel)</Link>
-        </div>
+        <Link href="/dashboard" className="inline-flex items-center gap-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:underline"><ArrowLeft size={14} /> All sites</Link>
 
         {loading ? <EmptyState text="Loading…" /> : (
           <>
             {/* SITE TOTALS */}
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-              <Tile label={WORDS.poValue} help={HELP.poValue} amount={sumPo('po_value')} color="#1F3A52" />
-              <Tile label={WORDS.billed} help={HELP.billed} amount={dash?.total_invoiced ?? 0} color="#1F3A52" />
-              <Tile label={WORDS.received} help={HELP.received} amount={totalReceived} color="#2F6B4F" />
-              <Tile label={WORDS.stillToReceive} help={HELP.stillToReceive} amount={sumPo('balance_against_po')} color="#A13D2B" note="whether billed yet or not" />
-              <Tile label={WORDS.billedUnpaid} help={HELP.billedUnpaid} amount={dash?.normal_outstanding ?? 0} color="#A13D2B" note="the client owes this today" />
-              <Tile label={WORDS.held} help={HELP.held} amount={dash?.retention_outstanding ?? 0} color="#B8860B" note="not overdue - kept separate" />
+              <StatTile icon={<FileText size={18} />} label={WORDS.poValue} help={HELP.poValue} amount={sumPo('po_value')} color="#1F3A52" />
+              <StatTile icon={<Receipt size={18} />} label={WORDS.billed} help={HELP.billed} amount={dash?.total_invoiced ?? 0} color="#1F3A52" />
+              <StatTile icon={<Wallet size={18} />} label={WORDS.received} help={HELP.received} amount={totalReceived} color="#2F6B4F" />
+              <StatTile icon={<Hourglass size={18} />} label={WORDS.stillToReceive} help={HELP.stillToReceive} amount={sumPo('balance_against_po')} color="#A13D2B" note="whether billed yet or not" />
+              <StatTile icon={<Clock size={18} />} label={WORDS.billedUnpaid} help={HELP.billedUnpaid} amount={dash?.normal_outstanding ?? 0} color="#A13D2B" note="the client owes this today" />
+              <StatTile icon={<ShieldCheck size={18} />} label={WORDS.held} help={HELP.held} amount={dash?.retention_outstanding ?? 0} color="#B8860B" note="not overdue - kept separate" />
             </div>
 
             {/* WORK PROGRESS */}
@@ -247,16 +247,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function Empty({ t }: { t: string }) { return <div className="px-6 py-3 font-sans text-sm text-[#1C1C1A]/40">{t}</div>; }
 
-function Tile({ label, amount, color, note, help }: { label: string; amount: number; color: string; note?: string; help?: string }) {
-  return (
-    <div className="min-w-0 border border-[#1C1C1A]/10 bg-white px-5 py-4" style={{ borderTop: `3px solid ${color}` }}>
-      <div className="font-sans text-[11px] font-semibold uppercase tracking-wider text-[#1C1C1A]/50" title={help}>{label}{help ? <span className="ml-1 cursor-help text-[#1F3A52]/60">ⓘ</span> : null}</div>
-      <div className="mt-2 whitespace-nowrap font-mono text-xl font-medium tabular-nums" style={{ color }}>{formatCompact(amount)}</div>
-      <div className="mt-1 whitespace-nowrap font-mono text-[11px] tabular-nums text-[#1C1C1A]/45" title="Exact amount">{formatINR(amount)}</div>
-      <div className="mt-1 h-4 font-sans text-[11px] text-[#1C1C1A]/40">{note ?? ''}</div>
-    </div>
-  );
-}
 function Cell({ label, v, color, strong }: { label: string; v: string; color?: string; strong?: boolean }) {
   return (
     <div className="bg-white px-4 py-3">
@@ -270,7 +260,7 @@ function Bar({ label, pct, color }: { label: string; pct: number | null; color: 
   return (
     <div>
       <div className="flex justify-between font-sans text-xs text-[#1C1C1A]/60"><span>{label}</span><span className="font-mono">{formatPct(pct)}</span></div>
-      <div className="mt-1 h-2 bg-[#1C1C1A]/10"><div className="h-full" style={{ width: `${w}%`, backgroundColor: color }} /></div>
+      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${w}%`, backgroundColor: color }} /></div>
     </div>
   );
 }

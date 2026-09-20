@@ -36,3 +36,16 @@ button:disabled { cursor: not-allowed; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   tr { break-inside: avoid; }
 }
+
+/* ---- look & feel ---------------------------------------------------- */
+html, body { background: #F3F5F8; }
+.card {
+  background: #fff;
+  border: 1px solid rgba(18, 40, 59, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 20px -12px rgba(16, 24, 40, 0.14);
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise 0.4s ease both; }
+::selection { background: rgba(232, 200, 114, 0.45); }
+@media print { .card { box-shadow: none; border-radius: 0; } }

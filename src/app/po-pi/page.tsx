@@ -16,8 +16,7 @@ import {
   FormShell,
   FieldInput,
   FieldSelect,
-  FieldFile,
-} from '@/lib/ui';
+  FieldFile, buttonClass } from '@/lib/ui';
 import { uploadDocument } from '@/lib/documents';
 
 export default function PoPiPage() {
@@ -89,7 +88,7 @@ export default function PoPiPage() {
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
+    <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader title="Purchase Orders & Proforma Invoices" subtitle="The commercial commitment (PO) and the commercial proposal (PI) — tracked separately, linked when a PI becomes billable." />
       {error && <ErrorBanner message={error} />}
 
@@ -126,7 +125,7 @@ export default function PoPiPage() {
             <Panel
               title={`Purchase Orders (${pos.length})`}
               action={
-                <button onClick={() => setShowNewPo(true)} className="border border-[#1F3A52] px-3 py-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">
+                <button onClick={() => setShowNewPo(true)} className={buttonClass}>
                   + Add PO
                 </button>
               }
@@ -164,7 +163,7 @@ export default function PoPiPage() {
             <Panel
               title={`Proforma Invoices (${pis.length})`}
               action={
-                <button onClick={() => setShowNewPi(true)} className="border border-[#1F3A52] px-3 py-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">
+                <button onClick={() => setShowNewPi(true)} className={buttonClass}>
                   + Add PI
                 </button>
               }

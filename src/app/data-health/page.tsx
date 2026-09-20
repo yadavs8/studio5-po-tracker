@@ -35,7 +35,7 @@ export default function DataHealthPage() {
   const check = rows.filter((r) => r.severity === 'check');
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
+    <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader
         title="Data health"
         subtitle="A live checklist of anything missing, unclear or wrong in your records. When this list is empty, every number in the app can be trusted. It updates by itself as you fix things."

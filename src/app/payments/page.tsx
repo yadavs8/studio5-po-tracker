@@ -15,8 +15,7 @@ import {
   FormShell,
   FieldInput,
   FieldSelect,
-  FieldFile,
-} from '@/lib/ui';
+  FieldFile, buttonClass } from '@/lib/ui';
 import { uploadDocument } from '@/lib/documents';
 
 const PAYMENT_TYPES: { value: PaymentType; label: string }[] = [
@@ -83,7 +82,7 @@ export default function PaymentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
+    <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader title="Payments" subtitle="Record what actually arrived, then allocate it across whichever invoices it settles — one payment can cover several invoices at once." />
       {error && <ErrorBanner message={error} />}
 
@@ -99,7 +98,7 @@ export default function PaymentsPage() {
           <Panel
             title={`Payments (${payments.length})`}
             action={
-              <button onClick={() => setShowNewPayment(true)} className="border border-[#1F3A52] px-3 py-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">
+              <button onClick={() => setShowNewPayment(true)} className={buttonClass}>
                 + Record Payment
               </button>
             }
@@ -129,7 +128,7 @@ export default function PaymentsPage() {
                       <Td>
                         <button
                           onClick={() => setAllocatingPaymentId(allocatingPaymentId === p.payment_id ? null : p.payment_id)}
-                          className="font-sans text-xs text-[#1F3A52] underline"
+                          className="rounded-md bg-[#1F3A52]/8 px-3 py-1 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white"
                         >
                           Allocate
                         </button>

@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { friendlyError } from '@/lib/plain';
 import { formatDate, formatPct } from '@/lib/format';
 import type { SubProject } from '@/lib/types';
-import { Panel, DataTable, Td, EmptyState, FormShell, FieldInput, FieldSelect } from '@/lib/ui';
+import { Panel, DataTable, Td, EmptyState, FormShell, FieldInput, FieldSelect, buttonClass } from '@/lib/ui';
 
 interface ProgressRow {
   progress_id: string;
@@ -53,7 +53,7 @@ export function ProgressPanel({
       <Panel
         title={`Physical Progress — ${siteName}`}
         action={
-          <button onClick={() => setShow(true)} className="border border-[#1F3A52] px-3 py-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">
+          <button onClick={() => setShow(true)} className={buttonClass}>
             + Log Progress
           </button>
         }

@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, Percent, LogOut } from 'lucide-react';
+import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, Percent, ListChecks, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { NotificationBar } from '@/components/NotificationBar';
 
 const NAV = [
   { href: '/dashboard', label: 'All sites', icon: LayoutDashboard },
@@ -13,6 +14,7 @@ const NAV = [
   { href: '/invoices', label: 'Tax invoices', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
   { href: '/reports', label: 'Reports', icon: FileSpreadsheet },
+  { href: '/todo', label: 'My to-do', icon: ListChecks },
   { href: '/tds', label: 'Tax credits', icon: Percent },
   { href: '/tally', label: 'Tally', icon: Landmark },
   { href: '/data-health', label: 'Data health', icon: ShieldCheck },
@@ -39,7 +41,8 @@ export function NavBar() {
   }
 
   return (
-    <nav className="sticky top-0 z-20 flex items-center gap-2 bg-[#0F2233]/95 px-6 shadow-lg shadow-black/10 backdrop-blur print:hidden">
+    <header className="sticky top-0 z-30 print:hidden">
+    <nav className="flex items-center gap-2 bg-[#0F2233]/95 px-6 shadow-lg shadow-black/10 backdrop-blur">
       <Link href="/dashboard" className="mr-4 flex items-center gap-3 whitespace-nowrap py-3 text-white">
         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-[#E8C872] to-[#C9A24A] font-serif text-lg font-bold text-[#0F2233] shadow-md">5</span>
         <span className="leading-tight">
@@ -78,5 +81,7 @@ export function NavBar() {
         <LogOut size={14} /> Sign out
       </button>
     </nav>
+    <NotificationBar />
+    </header>
   );
 }

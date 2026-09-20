@@ -12,7 +12,7 @@ Studio5 Project Tracker (the **Tally** page) into Tally. One way only: tracker �
 
 1. **Install Node.js 20 or newer** from nodejs.org (you already have it if the bill app runs on this PC).
 2. **Tally:** press `F1 (Help) → Settings → Connectivity → Client/Server configuration` and set
-   *Tally Prime acts as* **Both**, and enable the HTTP-XML server on port **9000**. Restart Tally if it asks.
+   *TallyPrime acts as* **Server** (or Both), and enable the HTTP-XML server on port **9000**. Restart Tally if it asks.
 3. **Make a test company in Tally** (a copy of your real one) and use it for the first runs.
    In the tracker's Tally page, put that test company's name in "Tally company name".
 4. **Create the agent's login:** Supabase → Authentication → Users → *Add user*. Use a separate email

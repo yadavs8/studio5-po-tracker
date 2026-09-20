@@ -110,10 +110,14 @@ export default function PaymentsPage() {
                 onCreated={() => { setShowNewPayment(false); loadPayments(); loadOpenInvoices(); }}
               />
             )}
+            <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-2.5 font-sans text-xs leading-relaxed text-slate-500">
+              <b className="text-[#A13D2B]">Needs matching</b> = money received that has not been tied to an invoice yet. &nbsp;
+              <b className="text-[#2F6E8E]">Advance in hand</b> = advance money waiting for the client&apos;s invoices; nothing to do until you raise them.
+            </div>
             {payments.length === 0 ? (
               <EmptyState text="No payments recorded yet." />
             ) : (
-              <DataTable columns={[{ label: 'Date' }, { label: 'Type' }, { label: 'Mode' }, { label: 'Amount', align: 'right' }, { label: 'Unallocated', align: 'right' }, { label: '' }]}>
+              <DataTable columns={[{ label: 'Date' }, { label: 'Type' }, { label: 'Mode' }, { label: 'Amount', align: 'right' }, { label: 'Not yet matched to an invoice', align: 'right' }, { label: '' }]}>
                 {payments.map((p) => {
                   const unalloc = unallocated[p.payment_id] ?? 0;
                   return (
@@ -123,14 +127,20 @@ export default function PaymentsPage() {
                       <Td>{p.payment_mode.replace(/_/g, ' ')}</Td>
                       <Td align="right" mono>{formatINR(p.amount_received)}</Td>
                       <Td align="right" mono>
-                        <span style={unalloc > 0 ? { color: '#A13D2B' } : {}}>{formatINR(unalloc)}</span>
+                        {unalloc <= 0.005 ? (
+                          <span className="text-slate-400">{formatINR(0)}</span>
+                        ) : p.payment_type === 'advance' ? (
+                          <span title="Advance money is kept until the client's invoices come. Nothing to do now." className="text-[#2F6E8E]">{formatINR(unalloc)}<span className="ml-1 font-sans text-[10px] font-semibold uppercase tracking-wider">advance in hand</span></span>
+                        ) : (
+                          <span title="Money received but not yet matched to an invoice" className="text-[#A13D2B]">{formatINR(unalloc)}<span className="ml-1 font-sans text-[10px] font-semibold uppercase tracking-wider">needs matching</span></span>
+                        )}
                       </Td>
                       <Td>
                         <button
                           onClick={() => setAllocatingPaymentId(allocatingPaymentId === p.payment_id ? null : p.payment_id)}
                           className="rounded-md bg-[#1F3A52]/8 px-3 py-1 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white"
                         >
-                          Allocate
+                          Match to invoice
                         </button>
                       </Td>
                     </tr>

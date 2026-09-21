@@ -5,6 +5,8 @@ import {
   recordBankPaymentPayloadSchema,
   RecordBankPaymentPayload,
 } from '@/lib/validations/billing';
+import { guardUniqueAllocationInvoices } from '@/domain/payments';
+import { DomainError } from '@/domain/errors';
 
 export interface PaymentActionResponse {
   success: boolean;
@@ -31,9 +33,22 @@ export async function recordBankPaymentWithAllocations(
   }
 
   const data = validation.data;
+
+  // 2. Guard against a duplicate invoice_id across allocations - Zod can't
+  // catch this (it validates each allocation independently) and the RPC
+  // would silently double-settle the invoice if it slipped through.
+  try {
+    guardUniqueAllocationInvoices(data.allocations);
+  } catch (err) {
+    if (err instanceof DomainError) {
+      return { success: false, error: err.message };
+    }
+    throw err;
+  }
+
   const supabase = await createClient();
 
-  // 2. Execute the Postgres RPC (ACID transaction in PL/pgSQL)
+  // 3. Execute the Postgres RPC (ACID transaction in PL/pgSQL)
   // `supabase.rpc` is typed as generic; we cast args to `any` to bypass
   // the stub type until `supabase gen types` is run against the live DB.
   const { data: receiptId, error } = await (supabase as any).rpc(

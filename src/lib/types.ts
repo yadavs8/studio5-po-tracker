@@ -59,6 +59,7 @@ export interface PurchaseOrder {
   advance_pct: number | null;
   retention_pct: number | null;
   status: PoStatus;
+  document_id: string | null;
   created_at: string;
 }
 
@@ -74,6 +75,7 @@ export interface ProformaInvoice {
   remarks: string | null;
   status: PiStatus;
   converted_invoice_id: string | null;
+  document_id: string | null;
   created_at: string;
 }
 
@@ -92,6 +94,7 @@ export interface TaxInvoice {
   gross_invoice_value: number;
   due_date: string | null;
   status: InvoiceStatus;
+  document_id: string | null;
   created_at: string;
 }
 
@@ -104,6 +107,7 @@ export interface Payment {
   payment_type: PaymentType;
   utr_or_reference: string | null;
   remarks: string | null;
+  document_id: string | null;
   created_at: string;
 }
 

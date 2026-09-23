@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { documentUrl } from '@/lib/documents';
+import { documentUrl, uploadDocument } from '@/lib/documents';
+import { updateWithAudit } from '@/lib/audit';
+import { friendlyError } from '@/lib/plain';
 import { formatINR, formatCompact, formatDate, formatPct } from '@/lib/format';
-import { FileText, Receipt, Wallet, Hourglass, Clock, ShieldCheck, FileSpreadsheet, ArrowLeft, Building2 } from 'lucide-react';
-import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, buttonClassOnDark } from '@/lib/ui';
+import { FileText, Receipt, Wallet, Hourglass, Clock, ShieldCheck, FileSpreadsheet, ArrowLeft, Building2, Pencil } from 'lucide-react';
+import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, buttonClassOnDark, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
 import { WORDS, HELP } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
 
@@ -39,8 +41,11 @@ export default function SitePage() {
   const [subs, setSubs] = useState<SubRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<{ kind: EditKind; id: string } | null>(null);
 
-  useEffect(() => {
+  useEffect(() => { load(); }, [id]);
+
+  function load() {
     (async () => {
       const q = await Promise.all([
         supabase.from('site').select('site_name, client:client_id(display_name)').eq('site_id', id).single(),
@@ -72,7 +77,7 @@ export default function SitePage() {
       }
       setLoading(false);
     })();
-  }, [id]);
+  }
 
   const invPo = useMemo(() => Object.fromEntries(invs.map((i) => [i.invoice_id, i.po_id])), [invs]);
   const totalReceived = pays.reduce((s, p) => s + Number(p.amount_received), 0);
@@ -150,7 +155,12 @@ export default function SitePage() {
               <Panel
                 key={po.po_id}
                 title={`PO ${po.po_number}${po.scope_description ? ' — ' + po.scope_description : ''}  ·  ${formatDate(po.po_date)}`}
-                action={<DocLink id={po.document_id} label="PO document" />}
+                action={
+                  <div className="flex items-center gap-3">
+                    <DocLink id={po.document_id} label="PO document" />
+                    <EditButton onClick={() => setEditing({ kind: 'po', id: po.po_id })} />
+                  </div>
+                }
               >
                 <PoSummary po={po} />
                 <Detail
@@ -158,6 +168,7 @@ export default function SitePage() {
                   invs={invs.filter((i) => i.po_id === po.po_id)}
                   settle={settle}
                   receipts={receiptsFor(po.po_id)}
+                  onEdit={(kind, id) => setEditing({ kind, id })}
                 />
               </Panel>
             ))}
@@ -173,30 +184,51 @@ export default function SitePage() {
                   <div className="border-b border-[#1C1C1A]/10 px-6 py-2 font-sans text-xs text-[#1C1C1A]/50">
                     These have no PO recorded (for example Lemon Tree ledger entries, or invoices whose PO has not been entered). Link them by adding the PO under PO &amp; PI.
                   </div>
-                  <Detail pis={uPis} invs={uInvs} settle={settle} receipts={uRec} />
+                  <Detail pis={uPis} invs={uInvs} settle={settle} receipts={uRec} onEdit={(kind, id) => setEditing({ kind, id })} />
                 </Panel>
               );
             })()}
           </>
         )}
       </div>
+
+      {editing && (
+        <EditDrawer
+          kind={editing.kind}
+          id={editing.id}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
     </div>
   );
 }
 
-function Detail({ pis, invs, settle, receipts }: {
+type EditKind = 'po' | 'pi' | 'invoice' | 'payment';
+
+function EditButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="inline-flex items-center gap-1 font-sans text-xs text-[#1F3A52] hover:underline">
+      <Pencil size={12} /> Edit
+    </button>
+  );
+}
+
+function Detail({ pis, invs, settle, receipts, onEdit }: {
   pis: PiRow[]; invs: InvRow[]; settle: Record<string, SettleRow>;
   receipts: { p: PayRow; applied: number }[];
+  onEdit?: (kind: EditKind, id: string) => void;
 }) {
   return (
     <div className="divide-y divide-[#1C1C1A]/10">
       <Section title={`Proforma invoices - quotes sent for approval (${pis.length})`}>
         {pis.length === 0 ? <Empty t="No PI recorded." /> : (
-          <DataTable columns={[{ label: 'PI no.' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }, { label: 'Note' }, { label: 'Doc' }]}>
+          <DataTable columns={[{ label: 'PI no.' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }, { label: 'Note' }, { label: 'Doc' }, { label: '' }]}>
             {pis.map((p) => (
               <tr key={p.pi_id}>
                 <Td>{p.pi_number}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
                 <Td><StatusBadge status={p.status} /></Td><Td>{p.remarks ?? ''}</Td><Td><DocLink id={p.document_id} /></Td>
+                <Td>{onEdit && <EditButton onClick={() => onEdit('pi', p.pi_id)} />}</Td>
               </tr>
             ))}
           </DataTable>
@@ -204,7 +236,7 @@ function Detail({ pis, invs, settle, receipts }: {
       </Section>
       <Section title={`Tax invoices raised (${invs.length})`}>
         {invs.length === 0 ? <Empty t="No tax invoice raised yet." /> : (
-          <DataTable columns={[{ label: 'Invoice no.' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Paid so far', align: 'right' }, { label: 'Tax deducted / held', align: 'right' }, { label: 'Still to pay', align: 'right' }, { label: 'Status' }, { label: 'Doc' }]}>
+          <DataTable columns={[{ label: 'Invoice no.' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Paid so far', align: 'right' }, { label: 'Tax deducted / held', align: 'right' }, { label: 'Still to pay', align: 'right' }, { label: 'Status' }, { label: 'Doc' }, { label: '' }]}>
             {invs.map((i) => {
               const s = settle[i.invoice_id];
               return (
@@ -214,6 +246,7 @@ function Detail({ pis, invs, settle, receipts }: {
                   <Td align="right" mono>{formatINR(s?.total_deducted ?? 0)}</Td>
                   <Td align="right" mono><span style={{ color: (s?.remaining_balance ?? 0) > 0 ? '#A13D2B' : undefined }}>{formatINR(s?.remaining_balance ?? i.gross_invoice_value)}</span></Td>
                   <Td><StatusBadge status={s?.computed_status ?? 'issued'} /></Td><Td><DocLink id={i.document_id} /></Td>
+                  <Td>{onEdit && <EditButton onClick={() => onEdit('invoice', i.invoice_id)} />}</Td>
                 </tr>
               );
             })}
@@ -222,12 +255,13 @@ function Detail({ pis, invs, settle, receipts }: {
       </Section>
       <Section title={`Money received in bank (${receipts.length})`}>
         {receipts.length === 0 ? <Empty t="No receipt recorded." /> : (
-          <DataTable columns={[{ label: 'Date' }, { label: 'Type' }, { label: 'Ref / note' }, { label: 'Amount received', align: 'right' }, { label: 'Used on invoices here', align: 'right' }, { label: 'Doc' }]}>
+          <DataTable columns={[{ label: 'Date' }, { label: 'Type' }, { label: 'Ref / note' }, { label: 'Amount received', align: 'right' }, { label: 'Used on invoices here', align: 'right' }, { label: 'Doc' }, { label: '' }]}>
             {receipts.map(({ p, applied }) => (
               <tr key={p.payment_id}>
                 <Td mono>{formatDate(p.payment_date)}</Td><Td>{p.payment_type.replace(/_/g, ' ')}</Td>
                 <Td>{[p.utr_or_reference, p.remarks].filter(Boolean).join(' — ')}</Td>
                 <Td align="right" mono>{formatINR(p.amount_received)}</Td><Td align="right" mono>{formatINR(applied)}</Td><Td><DocLink id={p.document_id} /></Td>
+                <Td>{onEdit && <EditButton onClick={() => onEdit('payment', p.payment_id)} />}</Td>
               </tr>
             ))}
           </DataTable>
@@ -332,4 +366,153 @@ function PoSummary({ po }: { po: PoRow }) {
 }
 function Key({ c, t }: { c: string; t: string }) {
   return <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5" style={{ backgroundColor: c }} />{t}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// Edit drawer — fix a mistake on an existing PO / PI / invoice / payment,
+// optionally attach or replace its file. Every change is logged to audit_log.
+// ---------------------------------------------------------------------------
+
+const EDIT_CONFIG: Record<EditKind, { table: string; idField: string; docType: 'po' | 'pi' | 'invoice' | 'payment_advice'; label: string }> = {
+  po: { table: 'purchase_order', idField: 'po_id', docType: 'po', label: 'Purchase Order' },
+  pi: { table: 'proforma_invoice', idField: 'pi_id', docType: 'pi', label: 'Proforma Invoice' },
+  invoice: { table: 'tax_invoice', idField: 'invoice_id', docType: 'invoice', label: 'Tax Invoice' },
+  payment: { table: 'payment', idField: 'payment_id', docType: 'payment_advice', label: 'Payment' },
+};
+
+function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string; onClose: () => void; onSaved: () => void }) {
+  const cfg = EDIT_CONFIG[kind];
+  const [row, setRow] = useState<Record<string, unknown> | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [file, setFile] = useState<File | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    supabase.from(cfg.table).select('*').eq(cfg.idField, id).single().then(({ data, error }) => {
+      if (error) { setLoadError(friendlyError(error)); return; }
+      setRow(data);
+      const f: Record<string, string> = {};
+      Object.entries(data).forEach(([k, v]) => { f[k] = v == null ? '' : String(v); });
+      setForm(f);
+    });
+  }, [kind, id]);
+
+  const set = (k: string) => (v: string) => setForm((prev) => ({ ...prev, [k]: v }));
+
+  async function submit() {
+    if (!row) return;
+    setSubmitting(true);
+    setSaveError(null);
+    let newDocId: string | null = null;
+    try {
+      if (file) newDocId = await uploadDocument(file, cfg.docType);
+    } catch (e) {
+      setSaveError((e as Error).message);
+      setSubmitting(false);
+      return;
+    }
+
+    const patch: Record<string, unknown> = {};
+    for (const key of Object.keys(form)) {
+      if (key === cfg.idField || key === 'created_at' || key === 'document_id') continue;
+      const original = row[key];
+      const raw = form[key];
+      if (original == null && raw === '') continue;
+      const value = typeof original === 'number' ? (raw === '' ? null : Number(raw)) : (raw === '' ? null : raw);
+      if (String(original ?? '') !== String(value ?? '')) patch[key] = value;
+    }
+    const oldDocId = row.document_id as string | null;
+    if (newDocId) patch.document_id = newDocId;
+
+    const { error } = await updateWithAudit(cfg.table, cfg.idField, id, patch);
+    setSubmitting(false);
+    if (error) { setSaveError(friendlyError(error)); return; }
+    if (newDocId && oldDocId) {
+      const { discardDocument } = await import('@/lib/documents');
+      await discardDocument(oldDocId);
+    }
+    onSaved();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#1C1C1A]/40 px-4 py-10" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h3 className="font-sans text-sm font-semibold text-[#1F3A52]">Edit {cfg.label}</h3>
+          <button onClick={onClose} className="font-sans text-xs text-slate-400 hover:text-slate-700">Close</button>
+        </div>
+        {loadError && <ErrorBanner message={loadError} />}
+        {!row ? (
+          <div className="px-6 py-10 text-center font-sans text-sm text-slate-400">Loading…</div>
+        ) : (
+          <FormShell onCancel={onClose} onSubmit={submit} submitting={submitting} error={saveError}>
+            {kind === 'po' && (
+              <>
+                <FieldInput label="PO Number" value={form.po_number ?? ''} onChange={set('po_number')} />
+                <FieldInput label="PO Date" type="date" value={form.po_date ?? ''} onChange={set('po_date')} />
+                <FieldInput label="Scope Description" value={form.scope_description ?? ''} onChange={set('scope_description')} full />
+                <FieldInput label="Taxable Value" type="number" value={form.taxable_value ?? ''} onChange={set('taxable_value')} />
+                <FieldInput label="GST Amount" type="number" value={form.gst_amount ?? ''} onChange={set('gst_amount')} />
+                <FieldInput label="Total Value (with GST)" type="number" value={form.total_value_with_gst ?? ''} onChange={set('total_value_with_gst')} />
+                <FieldInput label="Advance %" type="number" value={form.advance_pct ?? ''} onChange={set('advance_pct')} />
+                <FieldInput label="Retention %" type="number" value={form.retention_pct ?? ''} onChange={set('retention_pct')} />
+                <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[{ value: 'draft', label: 'Draft' }, { value: 'active', label: 'Active' }, { value: 'completed', label: 'Completed' }]} />
+              </>
+            )}
+            {kind === 'pi' && (
+              <>
+                <FieldInput label="PI Number" value={form.pi_number ?? ''} onChange={set('pi_number')} />
+                <FieldInput label="PI Date" type="date" value={form.pi_date ?? ''} onChange={set('pi_date')} />
+                <FieldInput label="Amount" type="number" value={form.amount ?? ''} onChange={set('amount')} />
+                <FieldInput label="Submitted Date" type="date" value={form.submitted_date ?? ''} onChange={set('submitted_date')} />
+                <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
+                  { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
+                  { value: 'approved', label: 'Approved' }, { value: 'converted_to_invoice', label: 'Converted to Invoice' },
+                ]} />
+                <FieldInput label="Remarks" value={form.remarks ?? ''} onChange={set('remarks')} full />
+              </>
+            )}
+            {kind === 'invoice' && (
+              <>
+                <FieldInput label="Invoice Number" value={form.invoice_number ?? ''} onChange={set('invoice_number')} />
+                <FieldInput label="Invoice Date" type="date" value={form.invoice_date ?? ''} onChange={set('invoice_date')} />
+                <FieldInput label="Taxable Value" type="number" value={form.taxable_value ?? ''} onChange={set('taxable_value')} />
+                <FieldInput label="GST Amount" type="number" value={form.gst_amount ?? ''} onChange={set('gst_amount')} />
+                <FieldInput label="Gross Invoice Value" type="number" value={form.gross_invoice_value ?? ''} onChange={set('gross_invoice_value')} />
+                <FieldInput label="Due Date" type="date" value={form.due_date ?? ''} onChange={set('due_date')} />
+                <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
+                  { value: 'draft', label: 'Draft' }, { value: 'issued', label: 'Issued' }, { value: 'partially_settled', label: 'Partially Settled' },
+                  { value: 'fully_settled', label: 'Fully Settled' }, { value: 'disputed', label: 'Disputed' }, { value: 'cancelled', label: 'Cancelled' },
+                ]} />
+                <p className="col-span-2 font-sans text-xs text-[#A13D2B]">Note: taxable value + GST must still equal the gross value (within a few paise), or the save will be rejected.</p>
+              </>
+            )}
+            {kind === 'payment' && (
+              <>
+                <FieldInput label="Payment Date" type="date" value={form.payment_date ?? ''} onChange={set('payment_date')} />
+                <FieldInput label="Amount Received" type="number" value={form.amount_received ?? ''} onChange={set('amount_received')} />
+                <FieldSelect label="Mode" value={form.payment_mode ?? ''} onChange={set('payment_mode')} options={[
+                  { value: 'bank_transfer', label: 'Bank Transfer' }, { value: 'cash', label: 'Cash' }, { value: 'cheque', label: 'Cheque' }, { value: 'other', label: 'Other' },
+                ]} />
+                <FieldSelect label="Type" value={form.payment_type ?? ''} onChange={set('payment_type')} options={[
+                  { value: 'advance', label: 'Advance' }, { value: 'invoice_settlement', label: 'Invoice Settlement' }, { value: 'retention_release', label: 'Retention Release' }, { value: 'other', label: 'Other' },
+                ]} />
+                <FieldInput label="UTR / Reference" value={form.utr_or_reference ?? ''} onChange={set('utr_or_reference')} />
+                <FieldInput label="Remarks" value={form.remarks ?? ''} onChange={set('remarks')} full />
+              </>
+            )}
+
+            <div className="col-span-2 flex items-center justify-between gap-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5">
+              <span className="font-sans text-xs text-slate-500">
+                {row.document_id ? 'A file is already attached. Choosing a new one replaces it.' : 'No file attached yet.'}
+              </span>
+            </div>
+            <FieldFile label={row.document_id ? 'Replace file (optional)' : 'Attach file (optional)'} onChange={setFile} />
+          </FormShell>
+        )}
+      </div>
+    </div>
+  );
 }

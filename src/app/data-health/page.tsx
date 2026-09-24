@@ -67,7 +67,7 @@ function Group({ title, tone, rows, intro }: { title: string; tone: string; rows
       <DataTable columns={[{ label: 'Site' }, { label: 'What is the problem' }, { label: 'Details' }, { label: 'Amount', align: 'right' }, { label: 'How to fix it' }]}>
         {rows.map((r, i) => (
           <tr key={`${r.code}-${r.site_id}-${i}`}>
-            <Td><Link href={`/sites/${r.site_id}`} className="text-[#1F3A52] underline">{r.site_name}</Link></Td>
+            <Td><Link href={`/site/?id=${r.site_id}`} className="text-[#1F3A52] underline">{r.site_name}</Link></Td>
             <Td>{r.message}</Td>
             <Td>{r.detail}</Td>
             <Td align="right" mono>{r.amount === null ? '' : formatINR(Number(r.amount))}</Td>

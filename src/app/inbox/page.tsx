@@ -53,13 +53,10 @@ export default function InboxPage() {
 
   useEffect(() => {
     load();
-    fetch('/api/extract').then((r) => r.json()).then((j) => setAiEnabled(!!j.ai_enabled)).catch(() => setAiEnabled(false));
+    setAiEnabled(false);
   }, [load]);
 
-  async function read(inboxId: string) {
-    try {
-      await fetch('/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inbox_id: inboxId }) });
-    } catch { /* the row keeps its status; "Read again" is available */ }
+  async function read(_inboxId: string) {
     await load();
   }
 
@@ -98,7 +95,7 @@ export default function InboxPage() {
         {aiEnabled === false && (
           <div className="flex items-start gap-3 rounded-xl border border-[#B8860B]/30 bg-[#B8860B]/5 px-5 py-4 font-sans text-sm text-[#7a5a05]">
             <AlertTriangle size={18} className="mt-0.5 flex-none" />
-            <div><b>Automatic reading is not switched on yet.</b> You can still drop documents here and fill in the details yourself (the file stays attached). To switch reading on, add <code className="rounded bg-black/5 px-1">ANTHROPIC_API_KEY</code> (the same key your bill app uses) to this service in the Render dashboard.</div>
+            <div><b>Automatic reading is switched off on this version.</b> You can still drop documents here and fill in the details yourself (the file stays attached).</div>
           </div>
         )}
 

@@ -103,7 +103,7 @@ export default function DashboardPage() {
                 {rows.map((r) => (
                   <tr key={r.site_id}>
                     <Td>{r.client_name}</Td>
-                    <Td><Link href={`/sites/${r.site_id}`} className="font-medium text-[#1F3A52] hover:underline">{r.site_name}</Link></Td>
+                    <Td><Link href={`/site/?id=${r.site_id}`} className="font-medium text-[#1F3A52] hover:underline">{r.site_name}</Link></Td>
                     <Td align="right" mono>{formatINR(r.current_contract_value)}</Td>
                     <Td align="right" mono>{formatINR(r.total_invoiced)}</Td>
                     <Td align="right" mono>{formatINR(r.total_collected)}</Td>
@@ -156,7 +156,7 @@ function SiteCard({ r, delay }: { r: SiteDashboardRow; delay: number }) {
     : Number(r.advance_balance) > 0.5 ? { t: 'Advance received', c: C.navy }
     : hasBilling ? { t: 'All paid', c: C.received } : { t: 'Not billed yet', c: C.tax };
   return (
-    <Link href={`/sites/${r.site_id}`} style={{ animationDelay: `${delay}ms` }} className="card rise group block p-5 transition-all hover:-translate-y-1 hover:shadow-xl">
+    <Link href={`/site/?id=${r.site_id}`} style={{ animationDelay: `${delay}ms` }} className="card rise group block p-5 transition-all hover:-translate-y-1 hover:shadow-xl">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-400">{r.client_name}</div>

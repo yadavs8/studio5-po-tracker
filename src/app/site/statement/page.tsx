@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
@@ -19,8 +19,8 @@ interface Ded { invoice_id: string; deduction_type: string; amount: number; stat
 const n = (v: unknown) => Number(v ?? 0);
 const sum = <T,>(a: T[], f: (x: T) => number) => a.reduce((s, x) => s + f(x), 0);
 
-export default function StatementPage() {
-  const { id } = useParams<{ id: string }>();
+function StatementPageInner() {
+  const id = useSearchParams().get('id') ?? '';
   const [siteName, setSiteName] = useState('');
   const [client, setClient] = useState('');
   const [pos, setPos] = useState<Po[]>([]);
@@ -139,7 +139,7 @@ export default function StatementPage() {
   return (
     <div className="min-h-screen bg-white px-8 py-6 print:px-0 print:py-0">
       <div className="mb-4 flex items-center justify-between print:hidden">
-        <Link href={`/sites/${id}`} className="font-sans text-xs text-[#1F3A52] underline">← Back to site</Link>
+        <Link href={`/site/?id=${id}`} className="font-sans text-xs text-[#1F3A52] underline">← Back to site</Link>
         <div className="flex gap-2">
           <button onClick={exportExcel} disabled={loading} className="bg-[#1F3A52] px-4 py-2 font-sans text-xs font-medium text-white hover:bg-[#1F3A52]/90 disabled:opacity-50">Download Excel</button>
           <button onClick={() => window.print()} disabled={loading} className="border border-[#1F3A52] px-4 py-2 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white disabled:opacity-50">Print / Save as PDF</button>
@@ -263,4 +263,8 @@ function H({ children }: { children: React.ReactNode }) {
 }
 function C({ children, r, mono, bold }: { children: React.ReactNode; r?: boolean; mono?: boolean; bold?: boolean }) {
   return <td className={`border border-[#1C1C1A]/20 px-2 py-1.5 ${r ? 'text-right font-mono tabular-nums' : ''} ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''}`}>{children}</td>;
+}
+
+export default function StatementPage() {
+  return <Suspense fallback={null}><StatementPageInner /></Suspense>;
 }

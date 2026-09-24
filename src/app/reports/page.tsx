@@ -187,7 +187,7 @@ export default function ReportsPage() {
               <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: `${s.client} — ${s.site_name}` }))} />
               <div className="flex flex-wrap gap-2">
                 <PrimaryButton onClick={towerSheets} disabled={!!busy || !siteId}><Download size={14} /> {busy === 'tower' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>
-                {siteId && <Link href={`/sites/${siteId}/statement`} className="inline-flex items-center rounded-lg border border-[#1F3A52]/30 px-4 py-2 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">Open printable statement</Link>}
+                {siteId && <Link href={`/site/statement/?id=${siteId}`} className="inline-flex items-center rounded-lg border border-[#1F3A52]/30 px-4 py-2 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">Open printable statement</Link>}
               </div>
             </div>
           } />

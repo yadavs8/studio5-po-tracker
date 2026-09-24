@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { documentUrl, uploadDocument } from '@/lib/documents';
@@ -27,8 +27,8 @@ interface AllocRow { payment_id: string; invoice_id: string | null; amount_alloc
 interface ProgRow { progress_id: string; sub_project_id: string | null; progress_pct: number; reported_date: string; note: string | null; }
 interface SubRow { sub_project_id: string; name: string; }
 
-export default function SitePage() {
-  const { id } = useParams<{ id: string }>();
+function SitePageInner() {
+  const id = useSearchParams().get('id') ?? '';
   const [site, setSite] = useState<{ site_name: string; client: string } | null>(null);
   const [dash, setDash] = useState<SiteDashboardRow | null>(null);
   const [pos, setPos] = useState<PoRow[]>([]);
@@ -103,7 +103,7 @@ export default function SitePage() {
     <div className="min-h-screen bg-[#F3F5F8]">
       <PageHeader
         icon={<Building2 size={24} className="text-[#E8C872]" />}
-        actions={<Link href={`/sites/${id}/statement`} className={buttonClassOnDark}><FileSpreadsheet size={14} /> Account statement (print / Excel)</Link>}
+        actions={<Link href={`/site/statement/?id=${id}`} className={buttonClassOnDark}><FileSpreadsheet size={14} /> Account statement (print / Excel)</Link>}
         title={site?.site_name ?? 'Site'}
         subtitle={site ? `${site.client} — every PO for this site, with its proforma invoices, tax invoices, money received and what is left.` : ''}
       />
@@ -524,4 +524,8 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
       </div>
     </div>
   );
+}
+
+export default function SitePage() {
+  return <Suspense fallback={null}><SitePageInner /></Suspense>;
 }

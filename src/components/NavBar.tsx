@@ -23,7 +23,7 @@ const NAV = [
 ];
 
 export function NavBar() {
-  const pathname = usePathname();
+  const pathname = usePathname().replace(/(.)\/$/, '$1');
   const router = useRouter();
   const [fixCount, setFixCount] = useState<number | null>(null);
 

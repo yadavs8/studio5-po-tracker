@@ -28,7 +28,7 @@ export const describe = (t: TodoItem) =>
 
 /** Slim bar under the menu on every page. Built live from the data (v_todo) so it can never go out of date. */
 export function NotificationBar() {
-  const pathname = usePathname();
+  const pathname = usePathname().replace(/(.)\/$/, '$1');
   const [items, setItems] = useState<TodoItem[] | null>(null);
   const [open, setOpen] = useState(false);
   const [idx, setIdx] = useState(0);

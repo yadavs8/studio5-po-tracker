@@ -12,6 +12,7 @@ import {
   type ClientLite, type SiteLite, type PoLite, type Draft, type DocKind,
 } from '@/lib/inboxMatch';
 import type { Extracted } from '@/lib/docExtract';
+import { extractApi } from '@/lib/extractApi';
 
 interface InboxRow {
   inbox_id: string; file_path: string; file_name: string; mime_type: string | null; size_bytes: number | null;
@@ -53,10 +54,11 @@ export default function InboxPage() {
 
   useEffect(() => {
     load();
-    setAiEnabled(false);
+    extractApi('GET').then((j) => setAiEnabled(!!j.ai_enabled)).catch(() => setAiEnabled(false));
   }, [load]);
 
-  async function read(_inboxId: string) {
+  async function read(inboxId: string) {
+    try { await extractApi('POST', { inbox_id: inboxId }); } catch { /* the row keeps its status; "Read again" is available */ }
     await load();
   }
 
@@ -95,7 +97,7 @@ export default function InboxPage() {
         {aiEnabled === false && (
           <div className="flex items-start gap-3 rounded-xl border border-[#B8860B]/30 bg-[#B8860B]/5 px-5 py-4 font-sans text-sm text-[#7a5a05]">
             <AlertTriangle size={18} className="mt-0.5 flex-none" />
-            <div><b>Automatic reading is switched off on this version.</b> You can still drop documents here and fill in the details yourself (the file stays attached).</div>
+            <div><b>Automatic reading is not available right now.</b> You can still drop documents here and fill in the details yourself (the file stays attached). If it should be on, the backend on Render needs its ANTHROPIC_API_KEY and the tracker settings (PO_SUPABASE_URL, PO_SUPABASE_ANON_KEY).</div>
           </div>
         )}
 

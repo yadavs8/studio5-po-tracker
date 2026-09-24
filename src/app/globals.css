@@ -49,3 +49,30 @@ html, body { background: #F3F5F8; }
 .rise { animation: rise 0.4s ease both; }
 ::selection { background: rgba(232, 200, 114, 0.45); }
 @media print { .card { box-shadow: none; border-radius: 0; } }
+
+/* ---- interactivity polish ------------------------------------------- */
+html { scroll-behavior: smooth; }
+main, body > div { animation: fadein 0.3s ease both; }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+.pop { animation: pop 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.backdrop { animation: fadein 0.18s ease both; backdrop-filter: blur(3px); }
+@keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+.skeleton {
+  border-radius: 10px;
+  background: linear-gradient(90deg, #e8ecf1 25%, #f5f7fa 50%, #e8ecf1 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+button:not(:disabled):active { transform: scale(0.97); }
+button, a, input, select { transition: box-shadow 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease; }
+:focus-visible { outline: 2px solid #E8C872; outline-offset: 2px; }
+thead th { position: sticky; top: 0; z-index: 1; backdrop-filter: blur(6px); }
+.card { transition: box-shadow 0.2s ease, transform 0.2s ease; }
+.card:hover { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 14px 28px -14px rgba(16, 24, 40, 0.22); }
+.bar-fill { transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #c5ced8; border-radius: 8px; border: 2px solid #F3F5F8; }
+::-webkit-scrollbar-thumb:hover { background: #9aa8b6; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+@media print { .skeleton { display: none; } thead th { position: static; } }

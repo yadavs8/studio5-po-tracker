@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { formatCompact, formatINR } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +76,25 @@ export function Panel({ title, action, children }: { title: string; action?: Rea
 // Stat tile (KPI card) — icon, short amount, exact amount underneath
 // ---------------------------------------------------------------------------
 
+function useCountUp(target: number, ms = 700) {
+  const [v, setV] = useState(0);
+  const from = useRef(0);
+  useEffect(() => {
+    const start = performance.now();
+    const a = from.current;
+    let raf = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / ms);
+      const e = 1 - Math.pow(1 - p, 3);
+      setV(a + (target - a) * e);
+      if (p < 1) raf = requestAnimationFrame(tick); else from.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return v;
+}
+
 export function StatTile({
   icon,
   label,
@@ -91,6 +110,7 @@ export function StatTile({
   note?: string;
   help?: string;
 }) {
+  const shown = useCountUp(amount);
   return (
     <div className="card rise group relative min-w-0 overflow-hidden px-5 py-4 transition-all hover:-translate-y-0.5 hover:shadow-lg">
       <div className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${color}, ${color}55)` }} />
@@ -105,7 +125,7 @@ export function StatTile({
           </span>
         )}
       </div>
-      <div className="mt-2 whitespace-nowrap font-mono text-2xl font-semibold tabular-nums" style={{ color }}>{formatCompact(amount)}</div>
+      <div className="mt-2 whitespace-nowrap font-mono text-2xl font-semibold tabular-nums" style={{ color }}>{formatCompact(shown)}</div>
       <div className="mt-0.5 whitespace-nowrap font-mono text-[11px] tabular-nums text-slate-400" title="Exact amount">{formatINR(amount)}</div>
       <div className="mt-1.5 h-4 font-sans text-[11px] text-slate-400">{note ?? ''}</div>
     </div>

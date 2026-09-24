@@ -111,7 +111,7 @@ export default function SitePage() {
       <div className="px-8 py-6 space-y-6">
         <Link href="/dashboard" className="inline-flex items-center gap-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:underline"><ArrowLeft size={14} /> All sites</Link>
 
-        {loading ? <EmptyState text="Loading…" /> : (
+        {loading ? <PageSkeleton /> : (
           <>
             {/* SITE TOTALS */}
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
@@ -294,7 +294,7 @@ function Bar({ label, pct, color }: { label: string; pct: number | null; color: 
   return (
     <div>
       <div className="flex justify-between font-sans text-xs text-[#1C1C1A]/60"><span>{label}</span><span className="font-mono">{formatPct(pct)}</span></div>
-      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${w}%`, backgroundColor: color }} /></div>
+      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="bar-fill h-full rounded-full" style={{ width: `${w}%`, backgroundColor: color }} /></div>
     </div>
   );
 }
@@ -361,6 +361,15 @@ function PoSummary({ po }: { po: PoRow }) {
           ? <> <b className="font-mono">{formatINR(still)}</b> is still to come{parts.length ? ': ' + parts.join('; ') : ''}.</>
           : <> Nothing is left to receive.</>}
       </p>
+    </div>
+  );
+}
+function PageSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">{[0,1,2,3,4,5].map((i) => <div key={i} className="skeleton h-28" />)}</div>
+      <div className="skeleton h-40" />
+      <div className="skeleton h-72" />
     </div>
   );
 }
@@ -437,15 +446,15 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#1C1C1A]/40 px-4 py-10" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#1C1C1A]/40 px-4 py-10 backdrop" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl pop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="font-sans text-sm font-semibold text-[#1F3A52]">Edit {cfg.label}</h3>
           <button onClick={onClose} className="font-sans text-xs text-slate-400 hover:text-slate-700">Close</button>
         </div>
         {loadError && <ErrorBanner message={loadError} />}
         {!row ? (
-          <div className="px-6 py-10 text-center font-sans text-sm text-slate-400">Loading…</div>
+          <div className="space-y-3 px-6 py-6"><div className="skeleton h-9" /><div className="skeleton h-9" /><div className="skeleton h-9" /></div>
         ) : (
           <FormShell onCancel={onClose} onSubmit={submit} submitting={submitting} error={saveError}>
             {kind === 'po' && (

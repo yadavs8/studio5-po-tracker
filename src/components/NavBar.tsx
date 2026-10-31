@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutGrid, Building2, FileText, Receipt, Wallet, FileSpreadsheet, LogOut } from 'lucide-react';
+import { LayoutGrid, Building2, FileText, FileCheck, Receipt, Wallet, FileSpreadsheet, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutGrid },
   { href: '/master-data', label: 'Clients & sites', icon: Building2 },
-  { href: '/po-pi', label: 'POs & PIs', icon: FileText },
+  { href: '/pis', label: 'Proforma invoices', icon: FileText },
+  { href: '/pos', label: 'POs / WOs', icon: FileCheck },
   { href: '/invoices', label: 'Tax invoices', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
   { href: '/reports', label: 'Reports', icon: FileSpreadsheet },
@@ -22,7 +23,11 @@ export function NavBar() {
   if (pathname === '/login') return null;
 
   const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(href + '/') || (href === '/dashboard' && pathname.startsWith('/site'));
+    pathname === href ||
+    pathname.startsWith(href + '/') ||
+    (href === '/dashboard' && pathname.startsWith('/site')) ||
+    (href === '/pis' && (pathname === '/pi' || pathname.startsWith('/pi/'))) ||
+    (href === '/pos' && (pathname === '/po' || pathname.startsWith('/po/')));
 
   async function signOut() {
     await supabase.auth.signOut();

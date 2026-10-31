@@ -116,7 +116,11 @@ function StatementPageInner() {
   const subName = (subId: string | null) => (subId ? subs.find((s) => s.sub_project_id === subId)?.name : undefined);
   const piFor = (p: Pi) => [p.po_id ? poNo(p.po_id) : '', subName(p.sub_project_id) ?? ''].filter(Boolean).join(' · ') || '—';
   // The statement line, as on the hand-kept SOA: "PI for Tile Work on Lily Pond".
-  const piParticulars = (p: Pi) => (p.subject ? `PI for ${p.subject}` : 'Proforma invoice');
+  // PIs entered before the subject field existed kept their description in
+  // remarks ("Civil Interior and Electrical works - Kramer Hall"), so for those
+  // the remarks are the line and the note column stays empty.
+  const piParticulars = (p: Pi) => (p.subject ? `PI for ${p.subject}` : p.remarks || 'Proforma invoice');
+  const piNote = (p: Pi) => (p.subject ? p.remarks ?? '' : '');
   const piOpen = pis.filter((p) => p.status !== 'converted_to_invoice');
   const piTotals = { all: sum(pis, (p) => n(p.amount)), open: sum(piOpen, (p) => n(p.amount)) };
   const [openingPi, setOpeningPi] = useState<string | null>(null);
@@ -152,7 +156,7 @@ function StatementPageInner() {
     ];
     const sPi: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Proforma invoices (not counted in the balances)'], [],
       ['S.N.', 'Particulars', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status / note', 'Status'],
-      ...pis.map((p, i) => [i + 1, piParticulars(p), p.pi_number, formatDate(p.pi_date), piFor(p), n(p.amount), p.remarks ?? '', piStatus(p)]),
+      ...pis.map((p, i) => [i + 1, piParticulars(p), p.pi_number, formatDate(p.pi_date), piFor(p), n(p.amount), piNote(p), piStatus(p)]),
       ['', 'TOTAL', '', '', '', piTotals.all, '', ''],
       ['', 'Not yet converted to a tax invoice', '', '', '', piTotals.open, '', '']];
     const s2: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Tax invoice details'], [],
@@ -240,7 +244,7 @@ function StatementPageInner() {
                   {pis.map((p, i) => (
                     <tr key={p.pi_id} className={p.status === 'converted_to_invoice' ? 'text-[#1C1C1A]/60' : ''}>
                       <C>{i + 1}</C><C>{piParticulars(p)}</C><C mono nowrap>{p.pi_number}</C><C mono>{formatDate(p.pi_date)}</C><C>{piFor(p)}</C>
-                      <C r>{formatINR(p.amount)}</C><C>{p.remarks ?? '—'}</C><C>{piStatus(p)}</C>
+                      <C r>{formatINR(p.amount)}</C><C>{piNote(p) || '—'}</C><C>{piStatus(p)}</C>
                       <td className="border border-[#1C1C1A]/20 px-2 py-1.5 print:hidden">
                         {p.document_id ? (
                           <button onClick={() => openPiFile(p)} disabled={openingPi === p.pi_id} className="font-sans text-xs text-[#1F3A52] underline disabled:opacity-50">

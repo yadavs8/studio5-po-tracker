@@ -75,12 +75,11 @@ export default function DashboardPage() {
       {error && <ErrorBanner message={error} />}
 
       <div className="space-y-8 px-8 py-8">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
-          <StatTile icon={<Clock size={18} />} label="Brought forward" note={`owed from before ${REPORTING_START_LABEL}`} amount={totals.broughtForward} color={C.navy} />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
           <StatTile icon={<FileText size={18} />} label="PO value (with GST)" note={`POs ${since}`} amount={totals.contract} color="#1F3A52" />
           <StatTile icon={<Receipt size={18} />} label="Billed" note={since} amount={totals.invoiced} color="#2F6E8E" />
           <StatTile icon={<Wallet size={18} />} label="Money received in bank" note={since} amount={totals.collected} color={C.received} />
-          <StatTile icon={<Clock size={18} />} label="Billed, waiting for payment" note="client owes this today (incl. brought forward)" amount={totals.outstanding} color={C.waiting} />
+          <StatTile icon={<Clock size={18} />} label="Billed, waiting for payment" note="client owes this today" amount={totals.outstanding} color={C.waiting} />
           <StatTile icon={<ShieldCheck size={18} />} label="Held back until handover" note="not overdue — kept separate" amount={totals.retention} color={C.held} />
           <StatTile icon={<PiggyBank size={18} />} label="Advance not yet used" amount={totals.advance} color={C.tax} />
         </div>
@@ -119,7 +118,6 @@ export default function DashboardPage() {
               <DataTable
                 columns={[
                   { label: 'Client' }, { label: 'Site' },
-                  { label: 'Brought forward', align: 'right' },
                   { label: `PO value ${since}`, align: 'right' }, { label: `Billed ${since}`, align: 'right' }, { label: `Received ${since}`, align: 'right' },
                   { label: 'Waiting for payment today', align: 'right' }, { label: 'Held till handover', align: 'right' },
                   { label: 'Billed vs work done' },
@@ -129,7 +127,6 @@ export default function DashboardPage() {
                   <tr key={r.site_id}>
                     <Td>{r.client_name}</Td>
                     <Td><Link href={`/site/?id=${r.site_id}`} className="font-medium text-[#1F3A52] hover:underline">{r.site_name}</Link></Td>
-                    <Td align="right" mono>{formatINR(bfOf(r.site_id).balance)}</Td>
                     <Td align="right" mono>{formatINR(pf(r.site_id).poValue)}</Td>
                     <Td align="right" mono>{formatINR(pf(r.site_id).billed)}</Td>
                     <Td align="right" mono>{formatINR(pf(r.site_id).received)}</Td>

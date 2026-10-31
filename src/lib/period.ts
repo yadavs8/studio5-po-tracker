@@ -1,19 +1,20 @@
 import { supabase } from '@/lib/supabase';
 
-// Reports, statements and the dashboard cover this date onwards. Everything
-// earlier stays in the database but is summarised as one brought-forward
-// balance per site, so money still owed from before is never lost.
-// Change this one line to move the cut-off.
-export const REPORTING_START = '2026-07-01';
-export const REPORTING_START_LABEL = '1 Jul 2026';
+// The portal starts on this date. Earlier records stay in the database but
+// signed-in users never see them: migration_011's access rules (keyed to
+// public.reporting_start(), which must match this date) hide them from every
+// table and view, so nothing earlier is listed, totalled or carried forward.
+export const REPORTING_START = '2026-08-01';
+export const REPORTING_START_LABEL = '1 Aug 2026';
 
-/** True when a date (YYYY-MM-DD or ISO) falls on or after the cut-off. */
+/** True when a date (YYYY-MM-DD or ISO) falls on or after the start. */
 export const inPeriod = (d: string | null | undefined) => !!d && String(d).slice(0, 10) >= REPORTING_START;
 
-/** Ask before saving a record dated before the cut-off. Returns false to cancel. */
+/** Stop a record dated before the start (the database would refuse it). Returns false to cancel. */
 export function confirmBeforeStart(date: string | null | undefined, what: string): boolean {
   if (!date || inPeriod(date)) return true;
-  return window.confirm(`This ${what} is dated before ${REPORTING_START_LABEL}. Records before then are only counted in the brought-forward balance, not listed. Save it anyway?`);
+  window.alert(`This ${what} is dated before ${REPORTING_START_LABEL}. The portal only keeps records from ${REPORTING_START_LABEL} onwards — please check the date.`);
+  return false;
 }
 
 export interface BroughtForward {

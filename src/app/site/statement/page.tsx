@@ -16,7 +16,7 @@ interface Pay { payment_id: string; po_id: string | null; payment_date: string; 
 interface Alloc { payment_id: string; amount_allocated: number; }
 interface Sub { sub_project_id: string; name: string; }
 interface Ded { invoice_id: string; deduction_type: string; amount: number; status: string; }
-interface Pi { pi_id: string; po_id: string | null; sub_project_id: string | null; pi_number: string; pi_date: string; amount: number; remarks: string | null; status: string; converted_invoice_id: string | null; document_id: string | null; }
+interface Pi { pi_id: string; po_id: string | null; sub_project_id: string | null; pi_number: string; pi_date: string; amount: number; subject: string | null; remarks: string | null; status: string; converted_invoice_id: string | null; document_id: string | null; }
 
 const n = (v: unknown) => Number(v ?? 0);
 
@@ -53,7 +53,7 @@ function StatementPageInner() {
         supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,total_deducted,remaining_balance').eq('site_id', id),
         supabase.from('payment').select('payment_id,po_id,payment_date,amount_received,payment_type,utr_or_reference,remarks').eq('site_id', id).order('payment_date'),
         supabase.from('sub_project').select('sub_project_id,name').eq('site_id', id),
-        supabase.from('proforma_invoice').select('pi_id,po_id,sub_project_id,pi_number,pi_date,amount,remarks,status,converted_invoice_id,document_id').eq('site_id', id).order('pi_date'),
+        supabase.from('proforma_invoice').select('pi_id,po_id,sub_project_id,pi_number,pi_date,amount,subject,remarks,status,converted_invoice_id,document_id').eq('site_id', id).order('pi_date'),
       ]);
       const failed = q.find((r) => r.error);
       if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
@@ -115,6 +115,8 @@ function StatementPageInner() {
       : PI_STATUS[p.status] ?? p.status.replace(/_/g, ' ');
   const subName = (subId: string | null) => (subId ? subs.find((s) => s.sub_project_id === subId)?.name : undefined);
   const piFor = (p: Pi) => [p.po_id ? poNo(p.po_id) : '', subName(p.sub_project_id) ?? ''].filter(Boolean).join(' · ') || '—';
+  // The statement line, as on the hand-kept SOA: "PI for Tile Work on Lily Pond".
+  const piParticulars = (p: Pi) => (p.subject ? `PI for ${p.subject}` : 'Proforma invoice');
   const piOpen = pis.filter((p) => p.status !== 'converted_to_invoice');
   const piTotals = { all: sum(pis, (p) => n(p.amount)), open: sum(piOpen, (p) => n(p.amount)) };
   const [openingPi, setOpeningPi] = useState<string | null>(null);
@@ -149,10 +151,10 @@ function StatementPageInner() {
       ['', 'TOTAL', '', '', totals.po, totals.billed, totals.received, totals.tds, totals.held, totals.balance],
     ];
     const sPi: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Proforma invoices (not counted in the balances)'], [],
-      ['S.N.', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status', 'Status'],
-      ...pis.map((p, i) => [i + 1, p.pi_number, formatDate(p.pi_date), piFor(p), n(p.amount), p.remarks ?? '', piStatus(p)]),
-      ['', 'TOTAL', '', '', piTotals.all, '', ''],
-      ['', 'Not yet converted to a tax invoice', '', '', piTotals.open, '', '']];
+      ['S.N.', 'Particulars', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status / note', 'Status'],
+      ...pis.map((p, i) => [i + 1, piParticulars(p), p.pi_number, formatDate(p.pi_date), piFor(p), n(p.amount), p.remarks ?? '', piStatus(p)]),
+      ['', 'TOTAL', '', '', '', piTotals.all, '', ''],
+      ['', 'Not yet converted to a tax invoice', '', '', '', piTotals.open, '', '']];
     const s2: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Tax invoice details'], [],
       ['Group', 'Invoice No.', 'Invoice date', 'Taxable value', 'GST', 'Invoice total', 'Paid so far', 'Tax deducted / held', 'Still to pay']];
     groups.forEach((g) => {
@@ -167,7 +169,7 @@ function StatementPageInner() {
       ['TOTAL', '', '', '', sum(receiptRows, (r) => n(r.p.amount_received)), sum(receiptRows, (r) => r.used), sum(receiptRows, (r) => r.unmatched)]];
 
     const wb = XLSX.utils.book_new();
-    [['Account statement', s1, [6, 34, 34, 13, 20, 16, 18, 20, 22, 22]], ['Proforma invoices', sPi, [6, 16, 13, 34, 16, 40, 28]], ['Tax invoices', s2, [30, 20, 14, 16, 14, 16, 16, 18, 16]], ['Money received', s3, [14, 50, 18, 30, 18, 18, 18]]]
+    [['Account statement', s1, [6, 34, 34, 13, 20, 16, 18, 20, 22, 22]], ['Proforma invoices', sPi, [6, 40, 16, 13, 30, 16, 40, 28]], ['Tax invoices', s2, [30, 20, 14, 16, 14, 16, 16, 18, 16]], ['Money received', s3, [14, 50, 18, 30, 18, 18, 18]]]
       .forEach(([name, rows, w]) => {
         const ws = XLSX.utils.aoa_to_sheet(rows as (string | number)[][]);
         ws['!cols'] = (w as number[]).map((wch) => ({ wch }));
@@ -230,14 +232,14 @@ function StatementPageInner() {
             <>
               <table className="w-full border-collapse text-sm">
                 <thead><tr className="bg-[#1F3A52] text-white">
-                  {['S.N.', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status', 'Status'].map((h, i) => (
-                    <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i === 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
+                  {['S.N.', 'Particulars', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status / note', 'Status'].map((h, i) => (
+                    <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i === 5 ? 'text-right' : 'text-left'}`}>{h}</th>))}
                   <th className="border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold print:hidden">File</th>
                 </tr></thead>
                 <tbody>
                   {pis.map((p, i) => (
                     <tr key={p.pi_id} className={p.status === 'converted_to_invoice' ? 'text-[#1C1C1A]/60' : ''}>
-                      <C>{i + 1}</C><C mono>{p.pi_number}</C><C mono>{formatDate(p.pi_date)}</C><C>{piFor(p)}</C>
+                      <C>{i + 1}</C><C>{piParticulars(p)}</C><C mono nowrap>{p.pi_number}</C><C mono>{formatDate(p.pi_date)}</C><C>{piFor(p)}</C>
                       <C r>{formatINR(p.amount)}</C><C>{p.remarks ?? '—'}</C><C>{piStatus(p)}</C>
                       <td className="border border-[#1C1C1A]/20 px-2 py-1.5 print:hidden">
                         {p.document_id ? (
@@ -249,12 +251,12 @@ function StatementPageInner() {
                     </tr>
                   ))}
                   <tr className="bg-[#FFF200]/50 font-semibold">
-                    <C> </C><C bold>TOTAL</C><C> </C><C> </C><C r bold>{formatINR(piTotals.all)}</C><C> </C><C> </C>
+                    <C> </C><C bold>TOTAL</C><C> </C><C> </C><C> </C><C r bold>{formatINR(piTotals.all)}</C><C> </C><C> </C>
                     <td className="border border-[#1C1C1A]/20 print:hidden" />
                   </tr>
                   {piOpen.length !== pis.length && (
                     <tr>
-                      <C> </C><C>Not yet converted to a tax invoice ({piOpen.length})</C><C> </C><C> </C><C r>{formatINR(piTotals.open)}</C><C> </C><C> </C>
+                      <C> </C><C>Not yet converted to a tax invoice ({piOpen.length})</C><C> </C><C> </C><C> </C><C r>{formatINR(piTotals.open)}</C><C> </C><C> </C>
                       <td className="border border-[#1C1C1A]/20 print:hidden" />
                     </tr>
                   )}
@@ -342,8 +344,8 @@ function GroupRows({ g, settle }: { g: { k: string; name: string; rows: Inv[] };
 function H({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-2 mt-8 font-serif text-base font-semibold text-[#1F3A52]">{children}</h2>;
 }
-function C({ children, r, mono, bold }: { children: React.ReactNode; r?: boolean; mono?: boolean; bold?: boolean }) {
-  return <td className={`border border-[#1C1C1A]/20 px-2 py-1.5 ${r ? 'text-right font-mono tabular-nums' : ''} ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''}`}>{children}</td>;
+function C({ children, r, mono, bold, nowrap }: { children: React.ReactNode; r?: boolean; mono?: boolean; bold?: boolean; nowrap?: boolean }) {
+  return <td className={`border border-[#1C1C1A]/20 px-2 py-1.5 ${r ? 'text-right font-mono tabular-nums' : ''} ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${nowrap ? 'whitespace-nowrap' : ''}`}>{children}</td>;
 }
 
 export default function StatementPage() {

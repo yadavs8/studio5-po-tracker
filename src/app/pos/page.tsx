@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatINR, formatDate } from '@/lib/format';
-import { PageHeader, ErrorBanner, EmptyState, DataTable, Td, StatusBadge, buttonClass } from '@/lib/ui';
+import { PageHeader, ErrorBanner, EmptyState, DataTable, Td, StatusBadge, FileBadge, buttonClass } from '@/lib/ui';
 import { Plus, Search } from 'lucide-react';
 
 interface PoItem {
@@ -171,13 +171,7 @@ function PosPageInner() {
                     <Td align="right" mono>{formatINR(p.total_value_with_gst)}</Td>
                     <Td><StatusBadge status={p.status} /></Td>
                     <Td>
-                      {ext ? (
-                        <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium uppercase text-slate-700">
-                          {ext}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
+                      <FileBadge ext={ext} />
                     </Td>
                   </tr>
                 );

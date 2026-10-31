@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { formatINR, formatDate } from '@/lib/format';
 import { ErrorBanner, EmptyState } from '@/lib/ui';
+import { documentUrl } from '@/lib/documents';
 
 interface Po { po_id: string; po_number: string; po_date: string; scope_description: string | null; po_value: number; invoiced: number; received_bank: number; tds_and_other_deductions: number; retention_pending: number; balance_against_po: number; }
 interface Inv { invoice_id: string; po_id: string | null; sub_project_id: string | null; invoice_number: string; invoice_date: string; taxable_value: number; gst_amount: number | null; gross_invoice_value: number; }
@@ -15,8 +16,17 @@ interface Pay { payment_id: string; po_id: string | null; payment_date: string; 
 interface Alloc { payment_id: string; amount_allocated: number; }
 interface Sub { sub_project_id: string; name: string; }
 interface Ded { invoice_id: string; deduction_type: string; amount: number; status: string; }
+interface Pi { pi_id: string; po_id: string | null; sub_project_id: string | null; pi_number: string; pi_date: string; amount: number; remarks: string | null; status: string; converted_invoice_id: string | null; document_id: string | null; }
 
 const n = (v: unknown) => Number(v ?? 0);
+
+const PI_STATUS: Record<string, string> = {
+  draft: 'Draft',
+  sent: 'Sent to client',
+  revision_requested: 'Client asked for changes',
+  approved: 'Approved by client',
+  converted_to_invoice: 'Tax invoice raised',
+};
 const sum = <T,>(a: T[], f: (x: T) => number) => a.reduce((s, x) => s + f(x), 0);
 
 function StatementPageInner() {
@@ -30,6 +40,7 @@ function StatementPageInner() {
   const [allocByPay, setAllocByPay] = useState<Record<string, number>>({});
   const [subs, setSubs] = useState<Sub[]>([]);
   const [deds, setDeds] = useState<Ded[]>([]);
+  const [pis, setPis] = useState<Pi[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -42,6 +53,7 @@ function StatementPageInner() {
         supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,total_deducted,remaining_balance').eq('site_id', id),
         supabase.from('payment').select('payment_id,po_id,payment_date,amount_received,payment_type,utr_or_reference,remarks').eq('site_id', id).order('payment_date'),
         supabase.from('sub_project').select('sub_project_id,name').eq('site_id', id),
+        supabase.from('proforma_invoice').select('pi_id,po_id,sub_project_id,pi_number,pi_date,amount,remarks,status,converted_invoice_id,document_id').eq('site_id', id).order('pi_date'),
       ]);
       const failed = q.find((r) => r.error);
       if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
@@ -58,6 +70,7 @@ function StatementPageInner() {
       const payRows = (q[4].data ?? []) as Pay[];
       setPays(payRows);
       setSubs((q[5].data ?? []) as Sub[]);
+      setPis((q[6].data ?? []) as Pi[]);
       if (payRows.length) {
         const { data: a } = await supabase.from('payment_allocation').select('payment_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
         const m: Record<string, number> = {};
@@ -91,14 +104,38 @@ function StatementPageInner() {
     balance: sum(pos, (p) => n(p.balance_against_po)) + noPo.left,
   };
 
-  // ---- Table 2: tax invoices, grouped by sub-project (tower) or PO -----------
+  // ---- Table 2: proforma invoices -------------------------------------------
+  // A PI asks for payment but is not a bill: per the five-tier model only tax
+  // invoices count as billed, so PIs are listed here and kept out of every
+  // balance above.
+  const invNo = (invoiceId: string | null) => invs.find((i) => i.invoice_id === invoiceId)?.invoice_number;
+  const piStatus = (p: Pi) =>
+    p.status === 'converted_to_invoice' && invNo(p.converted_invoice_id)
+      ? `Tax invoice ${invNo(p.converted_invoice_id)} raised`
+      : PI_STATUS[p.status] ?? p.status.replace(/_/g, ' ');
+  const subName = (subId: string | null) => (subId ? subs.find((s) => s.sub_project_id === subId)?.name : undefined);
+  const piFor = (p: Pi) => [p.po_id ? poNo(p.po_id) : '', subName(p.sub_project_id) ?? ''].filter(Boolean).join(' · ') || '—';
+  const piOpen = pis.filter((p) => p.status !== 'converted_to_invoice');
+  const piTotals = { all: sum(pis, (p) => n(p.amount)), open: sum(piOpen, (p) => n(p.amount)) };
+  const [openingPi, setOpeningPi] = useState<string | null>(null);
+
+  async function openPiFile(p: Pi) {
+    if (!p.document_id) return;
+    setOpeningPi(p.pi_id);
+    const url = await documentUrl(p.document_id);
+    setOpeningPi(null);
+    if (url) window.open(url, '_blank', 'noopener');
+    else setError(`Could not open the file for PI ${p.pi_number}.`);
+  }
+
+  // ---- Table 3: tax invoices, grouped by sub-project (tower) or PO -----------
   const groupKey = (i: Inv) => (i.sub_project_id ? `sp:${i.sub_project_id}` : i.po_id ? `po:${i.po_id}` : 'none');
   const groupName = (k: string) =>
     k.startsWith('sp:') ? subs.find((s) => s.sub_project_id === k.slice(3))?.name ?? 'Sub-project'
       : k.startsWith('po:') ? `PO ${poNo(k.slice(3))}` : 'Not linked to a PO or sub-project';
   const groups = Array.from(new Set(invs.map(groupKey))).map((k) => ({ k, name: groupName(k), rows: invs.filter((i) => groupKey(i) === k) }));
 
-  // ---- Table 3: receipts -----------------------------------------------------
+  // ---- Table 4: receipts -----------------------------------------------------
   const receiptRows = pays.map((p) => ({ p, used: n(allocByPay[p.payment_id]), unmatched: n(p.amount_received) - n(allocByPay[p.payment_id]) }));
 
   function exportExcel() {
@@ -111,6 +148,11 @@ function StatementPageInner() {
       ...(noPoInvs.length ? [['', 'Invoices not linked to a PO', '', '', '', noPo.billed, noPo.paid, noPo.tds, noPo.held, noPo.left]] : []),
       ['', 'TOTAL', '', '', totals.po, totals.billed, totals.received, totals.tds, totals.held, totals.balance],
     ];
+    const sPi: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Proforma invoices (not counted in the balances)'], [],
+      ['S.N.', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status', 'Status'],
+      ...pis.map((p, i) => [i + 1, p.pi_number, formatDate(p.pi_date), piFor(p), n(p.amount), p.remarks ?? '', piStatus(p)]),
+      ['', 'TOTAL', '', '', piTotals.all, '', ''],
+      ['', 'Not yet converted to a tax invoice', '', '', piTotals.open, '', '']];
     const s2: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Tax invoice details'], [],
       ['Group', 'Invoice No.', 'Invoice date', 'Taxable value', 'GST', 'Invoice total', 'Paid so far', 'Tax deducted / held', 'Still to pay']];
     groups.forEach((g) => {
@@ -125,7 +167,7 @@ function StatementPageInner() {
       ['TOTAL', '', '', '', sum(receiptRows, (r) => n(r.p.amount_received)), sum(receiptRows, (r) => r.used), sum(receiptRows, (r) => r.unmatched)]];
 
     const wb = XLSX.utils.book_new();
-    [['Account statement', s1, [6, 34, 34, 13, 20, 16, 18, 20, 22, 22]], ['Tax invoices', s2, [30, 20, 14, 16, 14, 16, 16, 18, 16]], ['Money received', s3, [14, 50, 18, 30, 18, 18, 18]]]
+    [['Account statement', s1, [6, 34, 34, 13, 20, 16, 18, 20, 22, 22]], ['Proforma invoices', sPi, [6, 16, 13, 34, 16, 40, 28]], ['Tax invoices', s2, [30, 20, 14, 16, 14, 16, 16, 18, 16]], ['Money received', s3, [14, 50, 18, 30, 18, 18, 18]]]
       .forEach(([name, rows, w]) => {
         const ws = XLSX.utils.aoa_to_sheet(rows as (string | number)[][]);
         ws['!cols'] = (w as number[]).map((wch) => ({ wch }));
@@ -183,7 +225,46 @@ function StatementPageInner() {
           </table>
           {noPoInvs.length > 0 && <p className="mt-1 text-[11px] text-[#1C1C1A]/60">For invoices that are not linked to a PO there is nothing to measure against, so the last column is simply what the client still owes on those invoices (held-back amounts are shown in their own column, not counted as owed).</p>}
 
-          <H>2. Tax invoices raised</H>
+          <H>2. Proforma invoices sent</H>
+          {pis.length === 0 ? <p className="text-sm text-[#1C1C1A]/50">No proforma invoices yet.</p> : (
+            <>
+              <table className="w-full border-collapse text-sm">
+                <thead><tr className="bg-[#1F3A52] text-white">
+                  {['S.N.', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status', 'Status'].map((h, i) => (
+                    <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i === 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
+                  <th className="border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold print:hidden">File</th>
+                </tr></thead>
+                <tbody>
+                  {pis.map((p, i) => (
+                    <tr key={p.pi_id} className={p.status === 'converted_to_invoice' ? 'text-[#1C1C1A]/60' : ''}>
+                      <C>{i + 1}</C><C mono>{p.pi_number}</C><C mono>{formatDate(p.pi_date)}</C><C>{piFor(p)}</C>
+                      <C r>{formatINR(p.amount)}</C><C>{p.remarks ?? '—'}</C><C>{piStatus(p)}</C>
+                      <td className="border border-[#1C1C1A]/20 px-2 py-1.5 print:hidden">
+                        {p.document_id ? (
+                          <button onClick={() => openPiFile(p)} disabled={openingPi === p.pi_id} className="font-sans text-xs text-[#1F3A52] underline disabled:opacity-50">
+                            {openingPi === p.pi_id ? 'Opening…' : 'Open'}
+                          </button>
+                        ) : <span className="text-xs text-[#1C1C1A]/40">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-[#FFF200]/50 font-semibold">
+                    <C> </C><C bold>TOTAL</C><C> </C><C> </C><C r bold>{formatINR(piTotals.all)}</C><C> </C><C> </C>
+                    <td className="border border-[#1C1C1A]/20 print:hidden" />
+                  </tr>
+                  {piOpen.length !== pis.length && (
+                    <tr>
+                      <C> </C><C>Not yet converted to a tax invoice ({piOpen.length})</C><C> </C><C> </C><C r>{formatINR(piTotals.open)}</C><C> </C><C> </C>
+                      <td className="border border-[#1C1C1A]/20 print:hidden" />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <p className="mt-1 text-[11px] text-[#1C1C1A]/60">A proforma invoice asks the client for payment before the tax invoice is raised. It is not a bill, so PI amounts are not counted in the balances above — the tax invoices below are.</p>
+            </>
+          )}
+
+          <H>3. Tax invoices raised</H>
           {invs.length === 0 ? <p className="text-sm text-[#1C1C1A]/50">No tax invoices raised yet.</p> : (
             <table className="w-full border-collapse text-sm">
               <thead><tr className="bg-[#1F3A52] text-white">
@@ -198,7 +279,7 @@ function StatementPageInner() {
             </table>
           )}
 
-          <H>3. Money received in bank</H>
+          <H>4. Money received in bank</H>
           {pays.length === 0 ? <p className="text-sm text-[#1C1C1A]/50">No money received yet.</p> : (
             <table className="w-full border-collapse text-sm">
               <thead><tr className="bg-[#1F3A52] text-white">

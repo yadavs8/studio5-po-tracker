@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { documentUrl, uploadDocument } from '@/lib/documents';
+import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
 import { friendlyError } from '@/lib/plain';
 import { formatINR, formatDate } from '@/lib/format';
@@ -121,10 +121,15 @@ function SitePageInner() {
             {vPos.map((po) => (
               <Panel
                 key={po.po_id}
-                title={`PO ${po.po_number}${po.scope_description ? ' — ' + po.scope_description : ''}  ·  ${formatDate(po.po_date)}`}
+                title={
+                  <span>
+                    PO <Link href={`/po/?id=${po.po_id}`} className="font-mono text-sky-700 hover:underline">{po.po_number}</Link>
+                    {po.scope_description ? ' — ' + po.scope_description : ''}  ·  {formatDate(po.po_date)}
+                  </span>
+                }
                 action={
                   <div className="flex items-center gap-3">
-                    <DocLink id={po.document_id} label="PO document" />
+                    <DocLink id={po.document_id} label="PO document" title={po.po_number} />
                     <EditButton onClick={() => setEditing({ kind: 'po', id: po.po_id })} />
                   </div>
                 }
@@ -190,8 +195,8 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
           <DataTable columns={[{ label: 'PI no.' }, { label: 'Subject' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }, { label: 'Work status / note' }, { label: 'Doc' }, { label: '' }]}>
             {pis.map((p) => (
               <tr key={p.pi_id}>
-                <Td mono>{p.pi_number}</Td><Td>{p.subject ?? ''}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
-                <Td><StatusBadge status={p.status} /></Td><Td>{p.remarks ?? ''}</Td><Td><DocLink id={p.document_id} /></Td>
+                <Td mono><Link href={`/pi/?id=${p.pi_id}`} className="text-sky-700 hover:underline">{p.pi_number}</Link></Td><Td>{p.subject ?? ''}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
+                <Td><StatusBadge status={p.status} /></Td><Td>{p.remarks ?? ''}</Td><Td><DocLink id={p.document_id} title={p.pi_number} /></Td>
                 <Td>{onEdit && <EditButton onClick={() => onEdit('pi', p.pi_id)} />}</Td>
               </tr>
             ))}
@@ -209,7 +214,7 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
                   <Td align="right" mono>{formatINR(s?.total_payments_allocated ?? 0)}</Td>
                   <Td align="right" mono>{formatINR(s?.total_deducted ?? 0)}</Td>
                   <Td align="right" mono><span style={{ color: (s?.remaining_balance ?? 0) > 0 ? '#dc2626' : undefined }}>{formatINR(s?.remaining_balance ?? i.gross_invoice_value)}</span></Td>
-                  <Td><StatusBadge status={s?.computed_status ?? 'issued'} /></Td><Td><DocLink id={i.document_id} /></Td>
+                  <Td><StatusBadge status={s?.computed_status ?? 'issued'} /></Td><Td><DocLink id={i.document_id} title={i.invoice_number} /></Td>
                   <Td>{onEdit && <EditButton onClick={() => onEdit('invoice', i.invoice_id)} />}</Td>
                 </tr>
               );
@@ -224,7 +229,7 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
               <tr key={p.payment_id}>
                 <Td mono>{formatDate(p.payment_date)}</Td><Td>{p.payment_type.replace(/_/g, ' ')}</Td>
                 <Td>{[p.utr_or_reference, p.remarks].filter(Boolean).join(' — ')}</Td>
-                <Td align="right" mono>{formatINR(p.amount_received)}</Td><Td align="right" mono>{formatINR(applied)}</Td><Td><DocLink id={p.document_id} /></Td>
+                <Td align="right" mono>{formatINR(p.amount_received)}</Td><Td align="right" mono>{formatINR(applied)}</Td><Td><DocLink id={p.document_id} title={p.utr_or_reference || 'Payment'} /></Td>
                 <Td>{onEdit && <EditButton onClick={() => onEdit('payment', p.payment_id)} />}</Td>
               </tr>
             ))}
@@ -245,17 +250,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function Empty({ t }: { t: string }) { return <div className="px-5 py-3 text-sm text-slate-400">{t}</div>; }
 
-function DocLink({ id, label = 'View' }: { id: string | null; label?: string }) {
-  const [busy, setBusy] = useState(false);
+function DocLink({ id, label = 'View', title }: { id: string | null; label?: string; title?: string }) {
   if (!id) return <span className="whitespace-nowrap text-xs text-slate-300">no file</span>;
   return (
-    <button
-      disabled={busy}
-      onClick={async () => { setBusy(true); const u = await documentUrl(id); setBusy(false); if (u) window.open(u, '_blank'); }}
-      className="text-xs font-medium text-sky-700 hover:underline disabled:opacity-50"
+    <Link
+      href={`/document/?id=${id}&title=${encodeURIComponent(title || label || 'Document')}`}
+      className="text-xs font-medium text-sky-700 hover:underline"
     >
-      {busy ? 'Opening…' : label}
-    </button>
+      {label}
+    </Link>
   );
 }
 

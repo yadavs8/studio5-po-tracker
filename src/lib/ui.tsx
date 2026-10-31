@@ -53,7 +53,7 @@ export function EmptyState({ text }: { text: string }) {
   return <div className="px-6 py-10 text-center text-sm text-slate-400">{text}</div>;
 }
 
-export function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+export function Panel({ title, action, children }: { title: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">

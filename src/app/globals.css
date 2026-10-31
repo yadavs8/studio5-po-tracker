@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 /* One clean sans-serif everywhere; numbers in a mono face so columns line up.
@@ -26,32 +26,38 @@ body {
 input, select, textarea, button { font-family: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
-:focus-visible { outline: 2px solid #0f172a; outline-offset: 2px; }
-::selection { background: #e2e8f0; }
+:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+::selection { background: #c7d2fe; color: #1e1b4b; }
 
 /* Surfaces */
 .card {
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-a.card:hover { border-color: #cbd5e1; }
+a.card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+}
 
 /* Loading placeholders */
 @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
 .skeleton {
   border-radius: 8px;
-  background: linear-gradient(90deg, #eef2f6 25%, #f8fafc 50%, #eef2f6 75%);
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
 }
 
-/* Kept for markup that still uses them; deliberately quiet now */
+/* Kept for markup that still uses them */
 .rise, .pop { animation: none; }
 .backdrop { backdrop-filter: blur(2px); }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; border: 2px solid #f8fafc; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* Print: statements go out on A4, plain */
 @page { size: A4 landscape; margin: 10mm; }
@@ -59,7 +65,7 @@ a.card:hover { border-color: #cbd5e1; }
   html, body { background: #fff !important; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   tr { break-inside: avoid; }
-  .card { border-radius: 0; }
+  .card { border-radius: 0; box-shadow: none; }
   .skeleton { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

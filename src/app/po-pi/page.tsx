@@ -89,13 +89,13 @@ export default function PoPiPage() {
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
   return (
-    <div className="min-h-screen bg-[#F3F5F8]">
-      <PageHeader title="Purchase Orders & Proforma Invoices" subtitle="The commercial commitment (PO) and the commercial proposal (PI) — tracked separately, linked when a PI becomes billable." />
+    <div className="pb-12">
+      <PageHeader title="POs & PIs" subtitle="Purchase orders and proforma invoices for a site." />
       {error && <ErrorBanner message={error} />}
 
-      <div className="px-8 py-6">
+      <div className="px-6 py-6 lg:px-8">
         {/* SELECTOR ROW */}
-        <div className="mb-6 flex gap-4">
+        <div className="card mb-6 grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
           <FieldSelect
             label="Client"
             value={clientId}
@@ -121,7 +121,7 @@ export default function PoPiPage() {
         {!siteId ? (
           <EmptyState text="Pick a client and site above to see or add its POs and PIs." />
         ) : (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             {/* PURCHASE ORDERS */}
             <Panel
               title={`Purchase Orders (${pos.length})`}
@@ -154,7 +154,7 @@ export default function PoPiPage() {
                 </DataTable>
               )}
               {pos.length > 0 && (
-                <div className="border-t border-[#1C1C1A]/10 px-4 py-2.5 text-right font-mono text-sm font-medium">
+                <div className="border-t border-slate-100 px-4 py-2.5 text-right font-mono text-sm font-medium">
                   Total: {formatINR(pos.reduce((s, p) => s + Number(p.total_value_with_gst), 0))}
                 </div>
               )}

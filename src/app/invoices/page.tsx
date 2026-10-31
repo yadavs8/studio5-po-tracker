@@ -95,12 +95,12 @@ export default function InvoicesPage() {
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
   return (
-    <div className="min-h-screen bg-[#F3F5F8]">
-      <PageHeader title="Tax Invoices" subtitle="Every invoice's settlement status is calculated automatically from payments allocated and deductions recorded — never set by hand." />
+    <div className="pb-12">
+      <PageHeader title="Tax invoices" subtitle="Settlement status is worked out from payments and deductions." />
       {error && <ErrorBanner message={error} />}
 
-      <div className="px-8 py-6">
-        <div className="mb-6 flex gap-4">
+      <div className="px-6 py-6 lg:px-8">
+        <div className="card mb-6 grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
           <FieldSelect label="Client" value={clientId} onChange={setClientId} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
           <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
           {selectedSite?.has_sub_projects && (
@@ -148,7 +148,7 @@ export default function InvoicesPage() {
                         <Td>
                           <button
                             onClick={() => setDeductionFormInvoiceId(deductionFormInvoiceId === inv.invoice_id ? null : inv.invoice_id)}
-                            className="rounded-md bg-[#1F3A52]/8 px-3 py-1 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white"
+                            className="rounded-md bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
                           >
                             {dCount > 0 ? `${dCount} deduction${dCount > 1 ? 's' : ''}` : '+ Deduction'}
                           </button>
@@ -244,9 +244,9 @@ function NewInvoiceForm({
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
       <FieldSelect label="Linked PI (optional)" value={piId} onChange={setPiId} options={pis.map((p) => ({ value: p.pi_id, label: p.pi_number }))} />
       <FieldFile onChange={setFile} />
-      <div className="col-span-2 font-mono text-sm text-[#1C1C1A]/60">Invoice total (taxable + GST): {formatINR(gross)}</div>
+      <div className="col-span-2 font-mono text-sm text-slate-500">Invoice total (taxable + GST): {formatINR(gross)}</div>
       {poLeft !== null && (
-        <div className={`col-span-2 font-sans text-xs ${overPo ? 'text-[#A13D2B]' : 'text-[#1C1C1A]/50'}`}>
+        <div className={`col-span-2 font-sans text-xs ${overPo ? 'text-red-600' : 'text-slate-400'}`}>
           {overPo
             ? `Careful: this invoice is ${formatINR(gross - poLeft)} MORE than what is left to bill on this PO (${formatINR(poLeft)} left). Check the amount, or that it is the right PO.`
             : `${formatINR(poLeft)} is still left to bill on this PO; after this invoice ${formatINR(poLeft - gross)} will be left.`}
@@ -289,7 +289,7 @@ function DeductionPanel({
   }
 
   return (
-    <div className="border-t border-b border-[#1C1C1A]/10 bg-[#1C1C1A]/[0.02] px-6 py-4">
+    <div className="border-t border-b border-slate-100 bg-slate-50 px-6 py-4">
       {existing.length > 0 && (
         <div className="mb-3 space-y-1">
           {existing.map((d) => (
@@ -304,11 +304,11 @@ function DeductionPanel({
         <FieldSelect label="Type" value={type} onChange={(v) => setType(v as DeductionType)} options={DEDUCTION_TYPES} />
         <FieldInput label="Amount" type="number" value={amount} onChange={setAmount} />
         <FieldInput label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. Kitchen Carcase" />
-        <button onClick={submit} disabled={submitting} className="bg-[#1F3A52] px-4 py-2 font-sans text-xs font-medium text-white hover:bg-[#1F3A52]/90 disabled:opacity-50">
+        <button onClick={submit} disabled={submitting} className="bg-slate-900 px-4 py-2 font-sans text-xs font-medium text-white hover:bg-slate-900/90 disabled:opacity-50">
           {submitting ? 'Saving…' : 'Add Deduction'}
         </button>
       </div>
-      {dedErr && <div className="mt-2 font-sans text-sm text-[#A13D2B]">{dedErr}</div>}
+      {dedErr && <div className="mt-2 font-sans text-sm text-red-600">{dedErr}</div>}
     </div>
   );
 }

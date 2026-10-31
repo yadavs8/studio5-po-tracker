@@ -5,7 +5,6 @@ import { Building2, MapPin, Layers, Plus } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { friendlyError } from '@/lib/plain';
 import type { Client, Site, SubProject } from '@/lib/types';
-import { ProgressPanel } from '@/components/ProgressPanel';
 import { PageHeader, ErrorBanner, EmptyState, FormShell, FieldInput } from '@/lib/ui';
 
 export default function MasterDataPage() {
@@ -55,15 +54,15 @@ export default function MasterDataPage() {
   const selectedSite = sites.find((s) => s.site_id === selectedSiteId) ?? null;
 
   return (
-    <div className="min-h-screen bg-[#F3F5F8] pb-12">
+    <div className="pb-12">
       <PageHeader
-        icon={<Building2 size={24} className="text-[#E8C872]" />}
+        icon={<Building2 />}
         title="Clients & sites"
-        subtitle="Set these up first: a client, its sites, and (only if a site has towers or work packages) its sub-projects. Everything else attaches here."
+        subtitle="A client, its sites, and (only if a site has towers or packages) its sub-projects."
       />
       {error && <ErrorBanner message={error} />}
 
-      <div className="grid grid-cols-1 gap-5 px-8 py-8 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 px-6 py-6 lg:grid-cols-3 lg:px-8">
         <Column icon={<Building2 size={16} />} title="Clients" count={clients.length} onAdd={() => setShowNewClient(true)}>
           {showNewClient && (
             <NewClientForm onCancel={() => setShowNewClient(false)} onCreated={() => { setShowNewClient(false); loadClients(); }} />
@@ -108,10 +107,6 @@ export default function MasterDataPage() {
           ))}
         </Column>
       </div>
-
-      {selectedSite && (
-        <ProgressPanel siteId={selectedSite.site_id} siteName={selectedSite.site_name} subProjects={subProjects} />
-      )}
     </div>
   );
 }
@@ -121,16 +116,16 @@ export default function MasterDataPage() {
 function Column({ icon, title, count, onAdd, children }: { icon: React.ReactNode; title: string; count: number; onAdd?: () => void; children: React.ReactNode }) {
   return (
     <div className="card flex min-h-[420px] flex-col overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-3.5">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-[#1F3A52]/10 text-[#1F3A52]">{icon}</span>
+          <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-slate-100 text-slate-700">{icon}</span>
           <div className="min-w-0">
-            <h2 className="truncate font-sans text-sm font-semibold text-[#1F3A52]">{title}</h2>
+            <h2 className="truncate font-sans text-sm font-semibold text-slate-900">{title}</h2>
             <span className="font-mono text-[11px] text-slate-400">{count} total</span>
           </div>
         </div>
         {onAdd && (
-          <button onClick={onAdd} className="inline-flex flex-none items-center gap-1 rounded-lg bg-[#1F3A52] px-3 py-1.5 font-sans text-xs font-semibold text-white shadow-sm transition hover:bg-[#2A4D6B]">
+          <button onClick={onAdd} className="inline-flex flex-none items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700">
             <Plus size={13} /> Add
           </button>
         )}
@@ -145,7 +140,7 @@ function RowItem({ label, sublabel, selected, onClick }: { label: string; sublab
     <button
       onClick={onClick}
       className={`w-full border-b border-slate-100 px-5 py-3.5 text-left transition-colors ${
-        selected ? 'border-l-4 border-l-[#E8C872] bg-[#1F3A52]/[0.06]' : 'border-l-4 border-l-transparent hover:bg-slate-50'
+        selected ? 'border-l-2 border-l-slate-900 bg-slate-100' : 'border-l-2 border-l-transparent hover:bg-slate-50'
       }`}
     >
       <div className="font-sans text-sm font-medium text-slate-800">{label}</div>
@@ -179,7 +174,7 @@ function NewClientForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
   return (
     <FormShell onCancel={onCancel} onSubmit={submit} submitting={submitting} error={err}>
       <FieldInput full label="Short name" value={displayName} onChange={setDisplayName} placeholder="e.g. Lemon Tree" />
-      <FieldInput full label="Full legal name (as in Tally)" value={legalName} onChange={setLegalName} placeholder="e.g. Lemon Tree Hotels Limited" />
+      <FieldInput full label="Full legal name" value={legalName} onChange={setLegalName} placeholder="e.g. Lemon Tree Hotels Limited" />
       <FieldInput full label="GSTIN (optional)" value={gstin} onChange={setGstin} />
     </FormShell>
   );

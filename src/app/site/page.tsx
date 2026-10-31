@@ -7,12 +7,12 @@ import { supabase } from '@/lib/supabase';
 import { documentUrl, uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
 import { friendlyError } from '@/lib/plain';
-import { formatINR, formatCompact, formatDate, formatPct } from '@/lib/format';
-import { FileText, Receipt, Wallet, Hourglass, Clock, ShieldCheck, FileSpreadsheet, ArrowLeft, Building2, Pencil } from 'lucide-react';
-import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, buttonClassOnDark, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
+import { formatINR, formatDate } from '@/lib/format';
+import { FileSpreadsheet, ArrowLeft, Pencil } from 'lucide-react';
+import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
 import { WORDS, HELP } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
-import { inPeriod, loadBroughtForward, confirmBeforeStart, REPORTING_START_LABEL, type BroughtForward } from '@/lib/period';
+import { confirmBeforeStart, REPORTING_START_LABEL } from '@/lib/period';
 
 interface PoRow {
   po_id: string; po_number: string; po_date: string; scope_description: string | null; sub_project_id: string | null;
@@ -25,8 +25,6 @@ interface InvRow { invoice_id: string; po_id: string | null; invoice_number: str
 interface SettleRow { invoice_id: string; total_payments_allocated: number; total_deducted: number; remaining_balance: number; computed_status: string; }
 interface PayRow { payment_id: string; po_id: string | null; payment_date: string; amount_received: number; payment_type: string; payment_mode: string; utr_or_reference: string | null; remarks: string | null; document_id: string | null; }
 interface AllocRow { payment_id: string; invoice_id: string | null; amount_allocated: number; }
-interface ProgRow { progress_id: string; sub_project_id: string | null; progress_pct: number; reported_date: string; note: string | null; }
-interface SubRow { sub_project_id: string; name: string; }
 
 function SitePageInner() {
   const id = useSearchParams().get('id') ?? '';
@@ -38,13 +36,9 @@ function SitePageInner() {
   const [settle, setSettle] = useState<Record<string, SettleRow>>({});
   const [pays, setPays] = useState<PayRow[]>([]);
   const [allocs, setAllocs] = useState<AllocRow[]>([]);
-  const [prog, setProg] = useState<ProgRow[]>([]);
-  const [subs, setSubs] = useState<SubRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<{ kind: EditKind; id: string } | null>(null);
-  const [bf, setBf] = useState<BroughtForward | null>(null);
-  const [showEarlier, setShowEarlier] = useState(false);
 
   useEffect(() => { load(); }, [id]);
 
@@ -58,8 +52,6 @@ function SitePageInner() {
         supabase.from('tax_invoice').select('invoice_id,po_id,invoice_number,invoice_date,gross_invoice_value,document_id,sub_project_id').eq('site_id', id).order('invoice_date'),
         supabase.from('v_invoice_settlement').select('*').eq('site_id', id),
         supabase.from('payment').select('*').eq('site_id', id).order('payment_date'),
-        supabase.from('physical_progress_log').select('*').eq('site_id', id).order('reported_date', { ascending: false }),
-        supabase.from('sub_project').select('sub_project_id,name').eq('site_id', id),
       ]);
       const failed = q.find((r) => r.error);
       if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
@@ -72,30 +64,19 @@ function SitePageInner() {
       setSettle(Object.fromEntries(((q[5].data ?? []) as SettleRow[]).map((r) => [r.invoice_id, r])));
       const payRows = (q[6].data ?? []) as PayRow[];
       setPays(payRows);
-      setProg((q[7].data ?? []) as ProgRow[]);
-      setSubs((q[8].data ?? []) as SubRow[]);
       if (payRows.length) {
         const { data: a, error: ae } = await supabase.from('payment_allocation').select('payment_id,invoice_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
         if (ae) setError(ae.message); else setAllocs((a ?? []) as AllocRow[]);
       }
-      try { setBf((await loadBroughtForward(id))[id] ?? null); } catch (e) { setError((e as Error).message); }
       setLoading(false);
     })();
   }
 
   const invPo = useMemo(() => Object.fromEntries(invs.map((i) => [i.invoice_id, i.po_id])), [invs]);
 
-  // Listed by default: records from the reporting start, plus any older PO
-  // that has something dated after it. "Show earlier records" lists all.
-  const vPis = showEarlier ? pis : pis.filter((p) => inPeriod(p.pi_date));
-  const vInvs = showEarlier ? invs : invs.filter((i) => inPeriod(i.invoice_date));
-  const vPays = showEarlier ? pays : pays.filter((p) => inPeriod(p.payment_date));
-  const vPos = showEarlier ? pos : pos.filter((p) => inPeriod(p.po_date)
-    || vInvs.some((i) => i.po_id === p.po_id) || vPis.some((x) => x.po_id === p.po_id) || vPays.some((y) => y.po_id === p.po_id));
-  const earlierCount = (pis.length - vPis.length) + (invs.length - vInvs.length) + (pays.length - vPays.length) + (pos.length - vPos.length);
-  const hiddenCount = showEarlier
-    ? pis.filter((p) => !inPeriod(p.pi_date)).length + invs.filter((i) => !inPeriod(i.invoice_date)).length + pays.filter((p) => !inPeriod(p.payment_date)).length
-    : earlierCount;
+  // Signed-in users only ever see records from the reporting start (RLS), so
+  // everything loaded is listed.
+  const vPis = pis, vInvs = invs, vPays = pays, vPos = pos;
 
   const totalReceived = vPays.reduce((s, p) => s + Number(p.amount_received), 0);
   const totalBilled = vInvs.reduce((s, i) => s + Number(i.gross_invoice_value), 0);
@@ -115,71 +96,28 @@ function SitePageInner() {
       .filter((r) => r.belongs);
   }
 
-  const siteProgress = dash?.physical_progress_pct ?? null;
-
   return (
-    <div className="min-h-screen bg-[#F3F5F8]">
+    <div className="pb-12">
       <PageHeader
-        icon={<Building2 size={24} className="text-[#E8C872]" />}
-        actions={<Link href={`/site/statement/?id=${id}`} className={buttonClassOnDark}><FileSpreadsheet size={14} /> Account statement (print / Excel)</Link>}
+        actions={<Link href={`/site/statement/?id=${id}`} className={buttonClass}><FileSpreadsheet size={15} /> Account statement</Link>}
         title={site?.site_name ?? 'Site'}
-        subtitle={site ? `${site.client} — every PO for this site, with its proforma invoices, tax invoices, money received and what is left.` : ''}
+        subtitle={site?.client ?? ''}
       />
       {error && <ErrorBanner message={error} />}
-      <div className="px-8 py-6 space-y-6">
-        <Link href="/dashboard" className="inline-flex items-center gap-1.5 font-sans text-xs font-medium text-[#1F3A52] hover:underline"><ArrowLeft size={14} /> All sites</Link>
+      <div className="space-y-6 px-6 py-6 lg:px-8">
+        <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900"><ArrowLeft size={15} /> Overview</Link>
 
         {loading ? <PageSkeleton /> : (
           <>
-            {/* SITE TOTALS */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#1F3A52]/10 bg-white px-4 py-2.5 font-sans text-xs text-[#1C1C1A]/70">
-              <span>
-                {showEarlier ? 'Showing every record, including those before ' : 'Showing records from '}{REPORTING_START_LABEL}
-                {!showEarlier && bf && Math.abs(bf.balance) > 0.5 && <> · brought forward from before: <b className="font-mono">{formatINR(bf.balance)}</b></>}
-              </span>
-              {hiddenCount > 0 && (
-                <button onClick={() => setShowEarlier((v) => !v)} className="font-medium text-[#1F3A52] underline">
-                  {showEarlier ? `Hide records before ${REPORTING_START_LABEL}` : `Show ${hiddenCount} earlier record${hiddenCount === 1 ? '' : 's'}`}
-                </button>
-              )}
+            <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+              <StatTile label={WORDS.poValue} help={HELP.poValue} amount={sumPo('po_value')} color="#0f172a" />
+              <StatTile label={WORDS.billed} help={HELP.billed} amount={totalBilled} color="#7c3aed" />
+              <StatTile label={WORDS.received} help={HELP.received} amount={totalReceived} color="#059669" />
+              <StatTile label="Waiting for payment" help={HELP.billedUnpaid} amount={dash?.normal_outstanding ?? 0} color="#dc2626" note="on tax invoices" />
             </div>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-              <StatTile icon={<FileText size={18} />} label={WORDS.poValue} help={HELP.poValue} amount={sumPo('po_value')} color="#1F3A52" note={showEarlier ? undefined : 'POs listed below'} />
-              <StatTile icon={<Receipt size={18} />} label={WORDS.billed} help={HELP.billed} amount={totalBilled} color="#1F3A52" note={showEarlier ? undefined : `since ${REPORTING_START_LABEL}`} />
-              <StatTile icon={<Wallet size={18} />} label={WORDS.received} help={HELP.received} amount={totalReceived} color="#2F6B4F" note={showEarlier ? undefined : `since ${REPORTING_START_LABEL}`} />
-              <StatTile icon={<Hourglass size={18} />} label={WORDS.stillToReceive} help={HELP.stillToReceive} amount={sumPo('balance_against_po')} color="#A13D2B" note="whether billed yet or not" />
-              <StatTile icon={<Clock size={18} />} label={WORDS.billedUnpaid} help={HELP.billedUnpaid} amount={dash?.normal_outstanding ?? 0} color="#A13D2B" note="the client owes this today" />
-              <StatTile icon={<ShieldCheck size={18} />} label={WORDS.held} help={HELP.held} amount={dash?.retention_outstanding ?? 0} color="#B8860B" note="not overdue - kept separate" />
-            </div>
-
-            {/* WORK PROGRESS */}
-            <Panel title="How far along is the work?">
-              <div className="grid grid-cols-1 gap-6 px-6 py-4 md:grid-cols-2">
-                <div>
-                  <Bar label="Work done on site" pct={siteProgress} color="#B8860B" />
-                  <div className="h-2" />
-                  <Bar label="Billed so far (of the PO)" pct={dash?.billing_progress_pct ?? null} color="#1F3A52" />
-                  <p className="mt-2 font-sans text-xs text-[#1C1C1A]/50">Two different things: how much work is finished, and how much has been billed. If work is far ahead of billing, you may be able to raise another invoice.</p>
-                </div>
-                <div className="font-sans text-sm">
-                  {prog.length === 0 ? <span className="text-[#1C1C1A]/40">No physical progress logged. Add it under Master Data → select the site.</span> : (
-                    <table className="w-full"><tbody>
-                      {prog.slice(0, 6).map((r) => (
-                        <tr key={r.progress_id}>
-                          <td className="py-1 font-mono text-xs text-[#1C1C1A]/60">{formatDate(r.reported_date)}</td>
-                          <td className="px-3">{r.sub_project_id ? subs.find((s) => s.sub_project_id === r.sub_project_id)?.name : 'Whole site'}</td>
-                          <td className="text-right font-mono">{formatPct(Number(r.progress_pct))}</td>
-                          <td className="pl-3 text-[#1C1C1A]/50">{r.note ?? ''}</td>
-                        </tr>
-                      ))}
-                    </tbody></table>
-                  )}
-                </div>
-              </div>
-            </Panel>
 
             {/* ONE BLOCK PER PO */}
-            {vPos.length === 0 && <EmptyState text={pos.length ? `No purchase orders from ${REPORTING_START_LABEL} onwards.` : 'No purchase orders recorded for this site yet. Add one under PO & PI.'} />}
+            {vPos.length === 0 && !vPis.length && !vInvs.length && !vPays.length && <EmptyState text={`Nothing recorded for this site from ${REPORTING_START_LABEL} yet.`} />}
             {vPos.map((po) => (
               <Panel
                 key={po.po_id}
@@ -209,10 +147,7 @@ function SitePageInner() {
               const uRec = receiptsFor(null);
               if (!uPis.length && !uInvs.length && !uRec.length) return null;
               return (
-                <Panel title="Not linked to a PO">
-                  <div className="border-b border-[#1C1C1A]/10 px-6 py-2 font-sans text-xs text-[#1C1C1A]/50">
-                    These have no PO recorded (for example Lemon Tree ledger entries, or invoices whose PO has not been entered). Link them by adding the PO under PO &amp; PI.
-                  </div>
+                <Panel title={vPos.length ? 'Not linked to a PO' : 'Records'}>
                   <Detail pis={uPis} invs={uInvs} settle={settle} receipts={uRec} onEdit={(kind, id) => setEditing({ kind, id })} />
                 </Panel>
               );
@@ -237,7 +172,7 @@ type EditKind = 'po' | 'pi' | 'invoice' | 'payment';
 
 function EditButton({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick} className="inline-flex items-center gap-1 font-sans text-xs text-[#1F3A52] hover:underline">
+    <button onClick={onClick} className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900">
       <Pencil size={12} /> Edit
     </button>
   );
@@ -249,13 +184,13 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
   onEdit?: (kind: EditKind, id: string) => void;
 }) {
   return (
-    <div className="divide-y divide-[#1C1C1A]/10">
+    <div className="divide-y divide-slate-100">
       <Section title={`Proforma invoices - quotes sent for approval (${pis.length})`}>
         {pis.length === 0 ? <Empty t="No PI recorded." /> : (
           <DataTable columns={[{ label: 'PI no.' }, { label: 'Subject' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }, { label: 'Work status / note' }, { label: 'Doc' }, { label: '' }]}>
             {pis.map((p) => (
               <tr key={p.pi_id}>
-                <Td>{p.pi_number}</Td><Td>{p.subject ?? ''}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
+                <Td mono>{p.pi_number}</Td><Td>{p.subject ?? ''}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
                 <Td><StatusBadge status={p.status} /></Td><Td>{p.remarks ?? ''}</Td><Td><DocLink id={p.document_id} /></Td>
                 <Td>{onEdit && <EditButton onClick={() => onEdit('pi', p.pi_id)} />}</Td>
               </tr>
@@ -270,10 +205,10 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
               const s = settle[i.invoice_id];
               return (
                 <tr key={i.invoice_id}>
-                  <Td>{i.invoice_number}</Td><Td mono>{formatDate(i.invoice_date)}</Td><Td align="right" mono>{formatINR(i.gross_invoice_value)}</Td>
+                  <Td mono>{i.invoice_number}</Td><Td mono>{formatDate(i.invoice_date)}</Td><Td align="right" mono>{formatINR(i.gross_invoice_value)}</Td>
                   <Td align="right" mono>{formatINR(s?.total_payments_allocated ?? 0)}</Td>
                   <Td align="right" mono>{formatINR(s?.total_deducted ?? 0)}</Td>
-                  <Td align="right" mono><span style={{ color: (s?.remaining_balance ?? 0) > 0 ? '#A13D2B' : undefined }}>{formatINR(s?.remaining_balance ?? i.gross_invoice_value)}</span></Td>
+                  <Td align="right" mono><span style={{ color: (s?.remaining_balance ?? 0) > 0 ? '#dc2626' : undefined }}>{formatINR(s?.remaining_balance ?? i.gross_invoice_value)}</span></Td>
                   <Td><StatusBadge status={s?.computed_status ?? 'issued'} /></Td><Td><DocLink id={i.document_id} /></Td>
                   <Td>{onEdit && <EditButton onClick={() => onEdit('invoice', i.invoice_id)} />}</Td>
                 </tr>
@@ -303,109 +238,55 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="bg-[#1C1C1A]/[0.02] px-6 py-2 font-sans text-[11px] font-semibold uppercase tracking-wider text-[#1C1C1A]/50">{title}</div>
+      <div className="bg-slate-50 px-5 py-2 text-xs font-medium text-slate-500">{title}</div>
       {children}
     </div>
   );
 }
-function Empty({ t }: { t: string }) { return <div className="px-6 py-3 font-sans text-sm text-[#1C1C1A]/40">{t}</div>; }
+function Empty({ t }: { t: string }) { return <div className="px-5 py-3 text-sm text-slate-400">{t}</div>; }
 
-function Cell({ label, v, color, strong }: { label: string; v: string; color?: string; strong?: boolean }) {
-  return (
-    <div className="bg-white px-4 py-3">
-      <div className="font-sans text-[10px] font-semibold uppercase tracking-wider text-[#1C1C1A]/45">{label}</div>
-      <div className={`mt-1 font-mono text-sm tabular-nums ${strong ? 'font-semibold' : ''}`} style={{ color: color ?? '#1C1C1A' }}>{v}</div>
-    </div>
-  );
-}
-function Bar({ label, pct, color }: { label: string; pct: number | null; color: string }) {
-  const w = pct === null ? 0 : Math.max(0, Math.min(100, pct));
-  return (
-    <div>
-      <div className="flex justify-between font-sans text-xs text-[#1C1C1A]/60"><span>{label}</span><span className="font-mono">{formatPct(pct)}</span></div>
-      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className="bar-fill h-full rounded-full" style={{ width: `${w}%`, backgroundColor: color }} /></div>
-    </div>
-  );
-}
 function DocLink({ id, label = 'View' }: { id: string | null; label?: string }) {
   const [busy, setBusy] = useState(false);
-  if (!id) return <span className="font-sans text-xs text-[#1C1C1A]/30">no file</span>;
+  if (!id) return <span className="whitespace-nowrap text-xs text-slate-300">no file</span>;
   return (
     <button
       disabled={busy}
       onClick={async () => { setBusy(true); const u = await documentUrl(id); setBusy(false); if (u) window.open(u, '_blank'); }}
-      className="font-sans text-xs text-[#1F3A52] underline disabled:opacity-50"
+      className="text-xs font-medium text-sky-700 hover:underline disabled:opacity-50"
     >
       {busy ? 'Opening…' : label}
     </button>
   );
 }
 
+// One line of figures per PO: what was agreed, billed, received, and left.
 function PoSummary({ po }: { po: PoRow }) {
-  const rcv = Number(po.received_bank), tds = Number(po.tds_and_other_deductions), val = Number(po.po_value);
-  const still = Number(po.balance_against_po), billedUnpaid = Number(po.invoice_outstanding), held = Number(po.retention_pending);
-  const notBilled = still - billedUnpaid - held; // after adjusting any advance already in hand
-  const pct = (n: number) => (val > 0 ? Math.max(0, Math.min(100, (n / val) * 100)) : 0);
-  const paidPct = val > 0 ? Math.round((rcv / val) * 100) : 0;
-
-  const parts: string[] = [];
-  if (notBilled > 0.5) parts.push(`${formatINR(notBilled)} is work not billed yet`);
-  if (billedUnpaid > 0.5) parts.push(`${formatINR(billedUnpaid)} is billed and waiting for the client to pay`);
-  if (held > 0.5) parts.push(`${formatINR(held)} is held back by the client until handover`);
-
-  let status: { text: string; color: string };
-  if (still <= 0.5) status = { text: 'Fully paid', color: '#2F6B4F' };
-  else if (billedUnpaid > 0.5) status = { text: 'Client owes you for billed work', color: '#A13D2B' };
-  else if (held > 0.5 && notBilled <= 0.5) status = { text: 'Only the held-back amount is left', color: '#B8860B' };
-  else status = { text: 'More billing still to come', color: '#1F3A52' };
-
+  const figs: [string, number, string?][] = [
+    [WORDS.poValue, Number(po.po_value)],
+    [WORDS.billed, Number(po.invoiced)],
+    [WORDS.received, Number(po.received_bank)],
+    ["Still to receive", Number(po.balance_against_po), Number(po.balance_against_po) > 0.5 ? "text-red-600" : undefined],
+  ];
   return (
-    <div className="border-b border-[#1C1C1A]/10 px-6 py-5">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="inline-block border px-2 py-0.5 font-sans text-xs font-medium" style={{ color: status.color, borderColor: `${status.color}55`, backgroundColor: `${status.color}0D` }}>
-          {status.text}
-        </span>
-        <span className="font-mono text-xs text-[#1C1C1A]/50">{po.invoice_count} tax invoice(s) · {po.pi_count} proforma(s)</span>
-      </div>
-
-      <div className="flex h-4 w-full overflow-hidden bg-[#1C1C1A]/10" role="img" aria-label="How the PO value is split">
-        <div style={{ width: `${pct(rcv)}%`, backgroundColor: '#2F6B4F' }} title={`Received ${formatINR(rcv)}`} />
-        <div style={{ width: `${pct(tds)}%`, backgroundColor: '#6B7B8C' }} title={`Tax deducted ${formatINR(tds)}`} />
-        <div style={{ width: `${pct(held)}%`, backgroundColor: '#B8860B' }} title={`Held back ${formatINR(held)}`} />
-        <div style={{ width: `${pct(billedUnpaid)}%`, backgroundColor: '#A13D2B' }} title={`Billed, waiting ${formatINR(billedUnpaid)}`} />
-        <div style={{ width: `${pct(Math.max(notBilled, 0))}%`, backgroundColor: '#C9D3DC' }} title={`Not billed yet ${formatINR(notBilled)}`} />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 font-sans text-xs text-[#1C1C1A]/70">
-        <Key c="#2F6B4F" t={`${WORDS.received}: ${formatINR(rcv)}`} />
-        <Key c="#6B7B8C" t={`${WORDS.taxDeducted}: ${formatINR(tds)}`} />
-        <Key c="#B8860B" t={`${WORDS.held}: ${formatINR(held)}`} />
-        <Key c="#A13D2B" t={`${WORDS.billedUnpaid}: ${formatINR(billedUnpaid)}`} />
-        <Key c="#C9D3DC" t={`${WORDS.notBilled}: ${formatINR(Math.max(notBilled, 0))}`} />
-      </div>
-
-      <p className="mt-4 font-sans text-sm leading-relaxed text-[#1C1C1A]">
-        Of the <b className="font-mono">{formatINR(val)}</b> PO, <b className="font-mono">{formatINR(rcv)}</b> ({paidPct}%) has reached your bank
-        {tds > 0.5 ? <> and <b className="font-mono">{formatINR(tds)}</b> was deducted as tax by the client</> : null}.
-        {still > 0.5
-          ? <> <b className="font-mono">{formatINR(still)}</b> is still to come{parts.length ? ': ' + parts.join('; ') : ''}.</>
-          : <> Nothing is left to receive.</>}
-      </p>
+    <div className="grid grid-cols-2 gap-px border-b border-slate-100 bg-slate-100 sm:grid-cols-4">
+      {figs.map(([label, v, tone]) => (
+        <div key={label} className="bg-white px-5 py-3">
+          <div className="text-xs text-slate-500">{label}</div>
+          <div className={`mt-0.5 font-mono text-sm font-medium tabular-nums ${tone ?? "text-slate-900"}`}>{formatINR(v)}</div>
+        </div>
+      ))}
     </div>
   );
 }
 function PageSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">{[0,1,2,3,4,5].map((i) => <div key={i} className="skeleton h-28" />)}</div>
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">{[0,1,2,3].map((i) => <div key={i} className="skeleton h-24" />)}</div>
       <div className="skeleton h-40" />
       <div className="skeleton h-72" />
     </div>
   );
 }
-function Key({ c, t }: { c: string; t: string }) {
-  return <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5" style={{ backgroundColor: c }} />{t}</span>;
-}
-
 // ---------------------------------------------------------------------------
 // Edit drawer — fix a mistake on an existing PO / PI / invoice / payment,
 // optionally attach or replace its file. Every change is logged to audit_log.
@@ -477,10 +358,10 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#1C1C1A]/40 px-4 py-10 backdrop" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 px-4 py-10 backdrop" onClick={onClose}>
       <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl pop" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h3 className="font-sans text-sm font-semibold text-[#1F3A52]">Edit {cfg.label}</h3>
+          <h3 className="font-sans text-sm font-semibold text-slate-900">Edit {cfg.label}</h3>
           <button onClick={onClose} className="font-sans text-xs text-slate-400 hover:text-slate-700">Close</button>
         </div>
         {loadError && <ErrorBanner message={loadError} />}
@@ -527,7 +408,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                   { value: 'draft', label: 'Draft' }, { value: 'issued', label: 'Issued' }, { value: 'partially_settled', label: 'Partially Settled' },
                   { value: 'fully_settled', label: 'Fully Settled' }, { value: 'disputed', label: 'Disputed' }, { value: 'cancelled', label: 'Cancelled' },
                 ]} />
-                <p className="col-span-2 font-sans text-xs text-[#A13D2B]">Note: taxable value + GST must still equal the gross value (within a few paise), or the save will be rejected.</p>
+                <p className="col-span-2 font-sans text-xs text-red-600">Note: taxable value + GST must still equal the gross value (within a few paise), or the save will be rejected.</p>
               </>
             )}
             {kind === 'payment' && (

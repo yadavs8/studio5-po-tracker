@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { FileSpreadsheet, Building2, Layers, Clock, Wallet, ShieldCheck, ScrollText, Download } from 'lucide-react';
+import { FileSpreadsheet, Building2, Layers, Clock, Wallet, ScrollText, Download } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { friendlyError } from '@/lib/plain';
 import { formatDate } from '@/lib/format';
 import { downloadWorkbook, num, today, type Cell, type Sheet } from '@/lib/exportXlsx';
-import { PageHeader, ErrorBanner, PrimaryButton, FieldSelect } from '@/lib/ui';
+import { PageHeader, ErrorBanner, PrimaryButton, FieldSelect, buttonClass } from '@/lib/ui';
 import { inPeriod, loadBroughtForward, loadPeriodFigures, REPORTING_START_LABEL } from '@/lib/period';
 
 interface SiteOpt { site_id: string; site_name: string; client: string; }
@@ -51,11 +51,11 @@ export default function ReportsPage() {
       const p = period[String(r.site_id)];
       return [i + 1, String(r.client_name), String(r.site_name), p?.poValue ?? 0, p?.billed ?? 0, p?.received ?? 0,
         num(r.normal_outstanding), num(r.retention_outstanding), num(r.advance_balance),
-        r.billing_progress_pct === null ? '' : num(r.billing_progress_pct), r.physical_progress_pct === null ? '' : num(r.physical_progress_pct)];
+        r.billing_progress_pct === null ? '' : num(r.billing_progress_pct)];
     });
-    rows.push(['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), '', '']);
-    downloadWorkbook('Studio5 - All sites summary', [{ name: 'All sites', widths: [6, 28, 38, 18, 18, 18, 20, 20, 18, 14, 14],
-      rows: [...HEAD('All sites at a glance'), ['S.N.', 'Client', 'Site', 'PO value (with GST)', 'Billed so far', 'Money received', 'Billed, waiting for payment', 'Held back until handover', 'Advance not yet used', 'Billed % of PO', 'Work done %'], ...rows] }]);
+    rows.push(['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), '']);
+    downloadWorkbook('Studio5 - All sites summary', [{ name: 'All sites', widths: [6, 28, 38, 18, 18, 18, 20, 20, 18, 14],
+      rows: [...HEAD('All sites at a glance'), ['S.N.', 'Client', 'Site', 'PO value (with GST)', 'Billed so far', 'Money received', 'Billed, waiting for payment', 'Held back until handover', 'Advance not yet used', 'Billed % of PO'], ...rows] }]);
   });
 
   // ---- 2. PO-wise statement, all sites -----------------------------------------------------
@@ -173,74 +173,63 @@ export default function ReportsPage() {
       rows: [...HEAD(`Money received in bank - payments from ${REPORTING_START_LABEL}`), ['S.N.', 'Date', 'Client', 'Site', 'For PO', 'Type', 'Mode', 'Reference', 'Note', 'Amount received', 'Used on invoices', 'Not yet matched'], ...rows] }]);
   });
 
-  // ---- 6. Data health ---------------------------------------------------------------------
-  const health = () => run('health', async () => {
-    const d = must(await supabase.from('v_data_health').select('*')) as Record<string, unknown>[];
-    const rows: Cell[][] = d.map((r, i) => [i + 1, r.severity === 'fix' ? 'Fix first' : 'Worth completing', String(r.site_name), String(r.area), String(r.message), String(r.detail), r.amount === null ? '' : num(r.amount), String(r.hint)]);
-    downloadWorkbook('Studio5 - Data health', [{ name: 'Data health', widths: [6, 16, 30, 18, 52, 44, 16, 60],
-      rows: [...HEAD('Records that are missing, unclear or wrong'), ['S.N.', 'Priority', 'Site', 'Area', 'Problem', 'Details', 'Amount', 'How to fix'], ...rows] }]);
-  });
-
   return (
-    <div className="min-h-screen bg-[#F3F5F8] pb-12">
+    <div className="pb-12">
       <PageHeader
-        icon={<FileSpreadsheet size={24} className="text-[#E8C872]" />}
+        icon={<FileSpreadsheet />}
         title="Reports & Excel"
-        subtitle="The sheets you used to make by hand, made in one click from the live data. Every figure comes from the POs, invoices, payments and deductions in the tracker, so it is always up to date."
+        subtitle={`Excel sheets made from the live data, covering ${REPORTING_START_LABEL} onwards.`}
       />
       {error && <ErrorBanner message={error} />}
 
-      <div className="grid grid-cols-1 gap-5 px-8 py-8 md:grid-cols-2 xl:grid-cols-3">
-        <Card icon={<Building2 size={20} />} color="#1F3A52" title="All sites summary" done={done === 'sites'}
-          text="One line per site: PO value, billed, received, waiting for payment, held back, and work progress. The sheet for the boss."
+      <div className="grid grid-cols-1 gap-4 px-6 py-6 md:grid-cols-2 lg:px-8 xl:grid-cols-3">
+        <Card icon={<Building2 size={20} />} title="All sites summary" done={done === 'sites'}
+          text="One line per site: PO value, billed, received, waiting for payment, and held back."
           action={<PrimaryButton onClick={allSites} disabled={!!busy}><Download size={14} /> {busy === 'sites' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>} />
 
-        <Card icon={<ScrollText size={20} />} color="#2F6E8E" title="PO-wise account statement (all sites)" done={done === 'po'}
+        <Card icon={<ScrollText size={20} />} title="PO-wise account statement (all sites)" done={done === 'po'}
           text="Every purchase order with its value, what is billed, received, tax deducted and the balance still to receive. Same layout as your Account Statement sheets."
           action={<PrimaryButton onClick={poStatement} disabled={!!busy}><Download size={14} /> {busy === 'po' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>} />
 
-        <Card icon={<Layers size={20} />} color="#B8860B" title="Tower / package payment details" done={done === 'tower'}
+        <Card icon={<Layers size={20} />} title="Tower / package payment details" done={done === 'tower'}
           text="Like your DSS 'Tower - B Payments Details' sheets: for a chosen site, each tower gets its own sheet (invoice, tax, payments, TDS, hold, balance) plus a summary sheet."
           action={
             <div className="flex w-full flex-col gap-3">
               <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: `${s.client} — ${s.site_name}` }))} />
               <div className="flex flex-wrap gap-2">
                 <PrimaryButton onClick={towerSheets} disabled={!!busy || !siteId}><Download size={14} /> {busy === 'tower' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>
-                {siteId && <Link href={`/site/statement/?id=${siteId}`} className="inline-flex items-center rounded-lg border border-[#1F3A52]/30 px-4 py-2 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white">Open printable statement</Link>}
+                {siteId && <Link href={`/site/statement/?id=${siteId}`} className={buttonClass}>Open printable statement</Link>}
               </div>
             </div>
           } />
 
-        <Card icon={<Clock size={20} />} color="#C0392B" title="Money waiting to be paid (with age)" done={done === 'age'}
+        <Card icon={<Clock size={20} />} title="Money waiting to be paid (with age)" done={done === 'age'}
           text="Every invoice the client still owes, oldest first, grouped as 0-30, 31-60, 61-90 and over 90 days. Use it to decide who to chase."
           action={<PrimaryButton onClick={ageing} disabled={!!busy}><Download size={14} /> {busy === 'age' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>} />
 
-        <Card icon={<Wallet size={20} />} color="#2F6B4F" title="Payments register" done={done === 'pay'}
+        <Card icon={<Wallet size={20} />} title="Payments register" done={done === 'pay'}
           text="Every rupee received in the bank: date, client, site, which PO, how much is used on invoices and how much is not yet matched."
           action={<PrimaryButton onClick={payments} disabled={!!busy}><Download size={14} /> {busy === 'pay' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>} />
 
-        <Card icon={<ShieldCheck size={20} />} color="#6B7B8C" title="Data health checklist" done={done === 'health'}
-          text="The list of missing files, unmatched payments and placeholder dates, with how to fix each. Share it with whoever enters the data."
-          action={<PrimaryButton onClick={health} disabled={!!busy}><Download size={14} /> {busy === 'health' ? 'Preparing…' : 'Download Excel'}</PrimaryButton>} />
       </div>
 
-      <p className="px-8 font-sans text-xs text-slate-400">Each download is a normal Excel file with real numbers, so you can add, filter and format it. For a single site&apos;s printable statement, open the site and press &quot;Account statement&quot;.</p>
+      <p className="px-6 text-xs text-slate-400 lg:px-8">Each download is a normal Excel file with real numbers, so you can add, filter and format it. For a single site&apos;s printable statement, open the site and press &quot;Account statement&quot;.</p>
     </div>
   );
 }
 
-function Card({ icon, color, title, text, action, done }: { icon: React.ReactNode; color: string; title: string; text: string; action: React.ReactNode; done?: boolean }) {
+function Card({ icon, title, text, action, done }: { icon: React.ReactNode; title: string; text: string; action: React.ReactNode; done?: boolean }) {
   return (
-    <div className="card rise flex flex-col p-6 transition-all hover:-translate-y-0.5 hover:shadow-lg">
-      <div className="flex items-start gap-4">
-        <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl" style={{ backgroundColor: `${color}14`, color }}>{icon}</span>
+    <div className="card flex flex-col p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-slate-100 text-slate-700 [&_svg]:h-[18px] [&_svg]:w-[18px]">{icon}</span>
         <div>
-          <h3 className="font-sans text-[15px] font-semibold text-slate-800">{title}</h3>
-          <p className="mt-1 font-sans text-sm leading-relaxed text-slate-500">{text}</p>
+          <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+          <p className="mt-1 text-sm leading-relaxed text-slate-500">{text}</p>
         </div>
       </div>
       <div className="mt-5 flex flex-1 items-end">{action}</div>
-      {done && <div className="mt-3 font-sans text-xs font-medium text-[#2F6B4F]">✓ Downloaded. Check your Downloads folder.</div>}
+      {done && <div className="mt-3 text-xs font-medium text-emerald-700">Downloaded. Check your Downloads folder.</div>}
     </div>
   );
 }

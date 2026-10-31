@@ -1,39 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Building2, FileText, Receipt, Wallet, ShieldCheck, FileSpreadsheet, BookOpen, Landmark, Percent, ListChecks, FilePlus2, LogOut } from 'lucide-react';
+import { LayoutGrid, Building2, FileText, Receipt, Wallet, FileSpreadsheet, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { NotificationBar } from '@/components/NotificationBar';
 
 const NAV = [
-  { href: '/dashboard', label: 'All sites', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Overview', icon: LayoutGrid },
   { href: '/master-data', label: 'Clients & sites', icon: Building2 },
-  { href: '/inbox', label: 'Add documents', icon: FilePlus2 },
-  { href: '/po-pi', label: 'POs & proformas', icon: FileText },
+  { href: '/po-pi', label: 'POs & PIs', icon: FileText },
   { href: '/invoices', label: 'Tax invoices', icon: Receipt },
   { href: '/payments', label: 'Payments', icon: Wallet },
   { href: '/reports', label: 'Reports', icon: FileSpreadsheet },
-  { href: '/todo', label: 'My to-do', icon: ListChecks },
-  { href: '/tds', label: 'Tax credits', icon: Percent },
-  { href: '/tally', label: 'Tally', icon: Landmark },
-  { href: '/data-health', label: 'Data health', icon: ShieldCheck },
-  { href: '/guide', label: 'Guide', icon: BookOpen },
 ];
 
+// Sidebar on wide screens, a scrollable top bar on phones. The site and
+// statement pages count as "Overview" since they are opened from it.
 export function NavBar() {
   const pathname = usePathname().replace(/(.)\/$/, '$1');
   const router = useRouter();
-  const [fixCount, setFixCount] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (pathname === '/login') return;
-    supabase.from('v_data_health').select('code', { count: 'exact', head: true }).eq('severity', 'fix')
-      .then(({ count }) => setFixCount(count ?? 0));
-  }, [pathname]);
-
   if (pathname === '/login') return null;
+
+  const isActive = (href: string) =>
+    pathname === href || pathname.startsWith(href + '/') || (href === '/dashboard' && pathname.startsWith('/site'));
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -41,48 +30,50 @@ export function NavBar() {
     router.refresh();
   }
 
-  return (
-    <header className="sticky top-0 z-30 print:hidden">
-    <nav className="flex items-center gap-2 bg-[#0F2233]/95 px-6 shadow-lg shadow-black/10 backdrop-blur">
-      <Link href="/dashboard" className="mr-4 flex items-center gap-3 whitespace-nowrap py-3 text-white">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-[#E8C872] to-[#C9A24A] font-serif text-lg font-bold text-[#0F2233] shadow-md">5</span>
-        <span className="leading-tight">
-          <span className="block font-serif text-base font-semibold tracking-tight">Studio5</span>
-          <span className="block font-sans text-[10px] uppercase tracking-[0.2em] text-white/50">Project Tracker</span>
-        </span>
-      </Link>
-
-      <div className="flex items-center gap-1 overflow-x-auto py-2">
-        {NAV.map((n) => {
-          const active = pathname === n.href || pathname.startsWith(n.href + '/');
-          const badge = n.href === '/data-health' && fixCount ? fixCount : null;
-          const Icon = n.icon;
-          return (
-            <Link
-              key={n.href}
-              href={n.href}
-              className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 font-sans text-[13px] transition-all ${
-                active
-                  ? 'bg-white/12 font-semibold text-white shadow-inner ring-1 ring-white/15'
-                  : 'text-white/60 hover:bg-white/8 hover:text-white'
-              }`}
-            >
-              <Icon size={15} className={active ? 'text-[#E8C872]' : ''} />
-              {n.label}
-              {badge ? <span className="rounded-full bg-[#D9534F] px-1.5 py-px font-mono text-[10px] font-semibold text-white">{badge}</span> : null}
-            </Link>
-          );
-        })}
-      </div>
-
-      <button
-        onClick={signOut}
-        className="ml-auto flex items-center gap-2 whitespace-nowrap rounded-lg border border-white/15 px-3 py-2 font-sans text-xs text-white/70 transition-colors hover:border-white/40 hover:bg-white/10 hover:text-white"
+  const items = NAV.map((n) => {
+    const Icon = n.icon;
+    const active = isActive(n.href);
+    return (
+      <Link
+        key={n.href}
+        href={n.href}
+        className={`flex items-center gap-3 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors ${
+          active ? 'bg-slate-900 font-medium text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+        }`}
       >
-        <LogOut size={14} /> Sign out
-      </button>
-    </nav>
-    <NotificationBar />
-    </header>
+        <Icon size={16} strokeWidth={active ? 2.2 : 1.8} />
+        {n.label}
+      </Link>
+    );
+  });
+
+  return (
+    <>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-slate-200 bg-white px-4 py-5 lg:flex print:hidden">
+        <Link href="/dashboard" className="mb-8 flex items-center gap-3 px-2">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-sm font-semibold text-white">S5</span>
+          <span className="leading-tight">
+            <span className="block text-sm font-semibold text-slate-900">Studio5</span>
+            <span className="block text-xs text-slate-500">Project tracker</span>
+          </span>
+        </Link>
+        <nav className="flex flex-col gap-1">{items}</nav>
+        <button
+          onClick={signOut}
+          className="mt-auto flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        >
+          <LogOut size={16} strokeWidth={1.8} /> Sign out
+        </button>
+      </aside>
+
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur lg:hidden print:hidden">
+        <div className="flex items-center gap-3 px-4 pt-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white">S5</span>
+          <span className="text-sm font-semibold text-slate-900">Studio5</span>
+          <button onClick={signOut} className="ml-auto text-slate-500 hover:text-slate-900" aria-label="Sign out"><LogOut size={18} /></button>
+        </div>
+        <nav className="flex gap-1 overflow-x-auto px-3 py-2">{items}</nav>
+      </header>
+    </>
   );
 }

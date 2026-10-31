@@ -83,12 +83,12 @@ export default function PaymentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F3F5F8]">
-      <PageHeader title="Payments" subtitle="Record what actually arrived, then allocate it across whichever invoices it settles — one payment can cover several invoices at once." />
+    <div className="pb-12">
+      <PageHeader title="Payments" subtitle="Money received, and which invoices it settles." />
       {error && <ErrorBanner message={error} />}
 
-      <div className="px-8 py-6">
-        <div className="mb-6 flex gap-4">
+      <div className="px-6 py-6 lg:px-8">
+        <div className="card mb-6 grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
           <FieldSelect label="Client" value={clientId} onChange={setClientId} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
           <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
         </div>
@@ -112,8 +112,8 @@ export default function PaymentsPage() {
               />
             )}
             <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-2.5 font-sans text-xs leading-relaxed text-slate-500">
-              <b className="text-[#A13D2B]">Needs matching</b> = money received that has not been tied to an invoice yet. &nbsp;
-              <b className="text-[#2F6E8E]">Advance in hand</b> = advance money waiting for the client&apos;s invoices; nothing to do until you raise them.
+              <b className="text-red-600">Needs matching</b> = money received that has not been tied to an invoice yet. &nbsp;
+              <b className="text-sky-700">Advance in hand</b> = advance money waiting for the client&apos;s invoices; nothing to do until you raise them.
             </div>
             {payments.length === 0 ? (
               <EmptyState text="No payments recorded yet." />
@@ -131,15 +131,15 @@ export default function PaymentsPage() {
                         {unalloc <= 0.005 ? (
                           <span className="text-slate-400">{formatINR(0)}</span>
                         ) : p.payment_type === 'advance' ? (
-                          <span title="Advance money is kept until the client's invoices come. Nothing to do now." className="text-[#2F6E8E]">{formatINR(unalloc)}<span className="ml-1 font-sans text-[10px] font-semibold uppercase tracking-wider">advance in hand</span></span>
+                          <span title="Advance money is kept until the client's invoices come. Nothing to do now." className="text-sky-700">{formatINR(unalloc)}<span className="ml-1 font-sans text-[10px] font-semibold uppercase tracking-wider">advance in hand</span></span>
                         ) : (
-                          <span title="Money received but not yet matched to an invoice" className="text-[#A13D2B]">{formatINR(unalloc)}<span className="ml-1 font-sans text-[10px] font-semibold uppercase tracking-wider">needs matching</span></span>
+                          <span title="Money received but not yet matched to an invoice" className="text-red-600">{formatINR(unalloc)}<span className="ml-1 font-sans text-[10px] font-semibold uppercase tracking-wider">needs matching</span></span>
                         )}
                       </Td>
                       <Td>
                         <button
                           onClick={() => setAllocatingPaymentId(allocatingPaymentId === p.payment_id ? null : p.payment_id)}
-                          className="rounded-md bg-[#1F3A52]/8 px-3 py-1 font-sans text-xs font-semibold text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white"
+                          className="rounded-md bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
                         >
                           Match to invoice
                         </button>
@@ -255,12 +255,12 @@ function NewPaymentForm({
                   type="number" min="0" step="0.01" placeholder="0"
                   value={match[inv.invoice_id] ?? ''}
                   onChange={(e) => setMatch({ ...match, [inv.invoice_id]: e.target.value })}
-                  className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right font-mono text-sm outline-none focus:border-[#1F3A52] focus:ring-2 focus:ring-[#1F3A52]/15"
+                  className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right font-mono text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/15"
                 />
               </div>
             ))}
           </div>
-          <div className={`border-t border-slate-100 px-4 py-2 font-mono text-xs ${left < -0.005 ? 'text-[#A13D2B]' : 'text-slate-500'}`}>
+          <div className={`border-t border-slate-100 px-4 py-2 font-mono text-xs ${left < -0.005 ? 'text-red-600' : 'text-slate-500'}`}>
             {left < -0.005
               ? `Matched ${formatINR(matched)} is MORE than received ${formatINR(total)}`
               : `Matched ${formatINR(matched)} · left unmatched ${formatINR(Math.max(left, 0))}`}
@@ -310,17 +310,17 @@ function AllocationDrawer({
   }
 
   return (
-    <div className="mt-6 border border-[#1F3A52]/30 bg-white">
-      <div className="flex items-center justify-between border-b border-[#1C1C1A]/10 px-6 py-4">
+    <div className="mt-6 border border-slate-200 bg-white">
+      <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
         <div>
           <h3 className="font-sans text-sm font-medium">
             Allocating {formatINR(payment.amount_received)} from {formatDate(payment.payment_date)}
           </h3>
-          <p className="mt-0.5 font-mono text-xs text-[#1C1C1A]/50">
+          <p className="mt-0.5 font-mono text-xs text-slate-400">
             Unallocated: {formatINR(unallocatedAmount)} · Remaining after this: {formatINR(remaining)}
           </p>
         </div>
-        <button onClick={onClose} className="font-sans text-xs text-[#1C1C1A]/50">Close</button>
+        <button onClick={onClose} className="font-sans text-xs text-slate-400">Close</button>
       </div>
 
       {openInvoices.length === 0 ? (
@@ -337,7 +337,7 @@ function AllocationDrawer({
                   value={allocations[inv.invoice_id] ?? ''}
                   onChange={(e) => setAllocations({ ...allocations, [inv.invoice_id]: e.target.value })}
                   placeholder="0"
-                  className="w-28 border border-[#1C1C1A]/15 px-2 py-1 text-right font-mono text-sm outline-none focus:border-[#1F3A52]"
+                  className="w-28 border border-slate-900/15 px-2 py-1 text-right font-mono text-sm outline-none focus:border-slate-900"
                 />
               </Td>
             </tr>
@@ -345,15 +345,15 @@ function AllocationDrawer({
         </DataTable>
       )}
 
-      <div className="flex items-center justify-between border-t border-[#1C1C1A]/10 px-6 py-4">
-        {saveError && <span className="font-sans text-sm text-[#A13D2B]">{saveError}</span>}
-        <span className={`font-mono text-xs ${remaining < 0 ? 'text-[#A13D2B]' : 'text-[#1C1C1A]/50'}`}>
+      <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+        {saveError && <span className="font-sans text-sm text-red-600">{saveError}</span>}
+        <span className={`font-mono text-xs ${remaining < 0 ? 'text-red-600' : 'text-slate-400'}`}>
           {remaining < 0 ? 'Allocation exceeds unallocated amount' : `${formatINR(remaining)} will remain unallocated`}
         </span>
         <button
           onClick={submit}
           disabled={submitting || totalEntered === 0 || remaining < 0}
-          className="bg-[#1F3A52] px-4 py-2 font-sans text-xs font-medium text-white hover:bg-[#1F3A52]/90 disabled:opacity-50"
+          className="bg-slate-900 px-4 py-2 font-sans text-xs font-medium text-white hover:bg-slate-900/90 disabled:opacity-50"
         >
           {submitting ? 'Saving…' : 'Save Allocation'}
         </button>

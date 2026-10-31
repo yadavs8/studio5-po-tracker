@@ -204,36 +204,36 @@ function StatementPageInner() {
   return (
     <div className="min-h-screen bg-white px-8 py-6 print:px-0 print:py-0">
       <div className="mb-4 flex items-center justify-between print:hidden">
-        <Link href={`/site/?id=${id}`} className="font-sans text-xs text-[#1F3A52] underline">← Back to site</Link>
+        <Link href={`/site/?id=${id}`} className="font-sans text-xs text-slate-900 underline">← Back to site</Link>
         <div className="flex gap-2">
-          <button onClick={exportExcel} disabled={loading} className="bg-[#1F3A52] px-4 py-2 font-sans text-xs font-medium text-white hover:bg-[#1F3A52]/90 disabled:opacity-50">Download Excel</button>
-          <button onClick={() => window.print()} disabled={loading} className="border border-[#1F3A52] px-4 py-2 font-sans text-xs font-medium text-[#1F3A52] hover:bg-[#1F3A52] hover:text-white disabled:opacity-50">Print / Save as PDF</button>
+          <button onClick={exportExcel} disabled={loading} className="bg-slate-900 px-4 py-2 font-sans text-xs font-medium text-white hover:bg-slate-900/90 disabled:opacity-50">Download Excel</button>
+          <button onClick={() => window.print()} disabled={loading} className="border border-slate-900 px-4 py-2 font-sans text-xs font-medium text-slate-900 hover:bg-slate-900 hover:text-white disabled:opacity-50">Print / Save as PDF</button>
         </div>
       </div>
       {error && <ErrorBanner message={error} />}
       {loading ? <EmptyState text="Preparing statement…" /> : (
-        <div className="mx-auto max-w-[1200px] font-sans text-[#1C1C1A]">
+        <div className="mx-auto max-w-[1200px] font-sans text-slate-900">
           <div className="text-center">
             <div className="font-serif text-xl font-semibold">ACCOUNT STATEMENT</div>
             <div className="mt-1 text-sm font-semibold">STUDIO5 INTERIORS PVT LTD</div>
             <div className="text-sm">{client.toUpperCase()} — {siteName.toUpperCase()}</div>
-            <div className="mt-1 font-mono text-xs text-[#1C1C1A]/60">As on {asOn} · covers {REPORTING_START_LABEL} onwards</div>
+            <div className="mt-1 font-mono text-xs text-slate-500">As on {asOn} · covers {REPORTING_START_LABEL} onwards</div>
           </div>
           {hidden > 0 && (
-            <p className="mt-3 text-center text-[11px] text-[#1C1C1A]/60">
+            <p className="mt-3 text-center text-[11px] text-slate-500">
               {hidden} record{hidden === 1 ? '' : 's'} dated before {REPORTING_START_LABEL} {hidden === 1 ? 'is' : 'are'} not listed; what they leave owing is the brought-forward line.
             </p>
           )}
 
           <H>1. Purchase orders — what was agreed, received and what is left</H>
           <table className="w-full border-collapse text-sm">
-            <thead><tr className="bg-[#1F3A52] text-white">
+            <thead><tr className="bg-slate-900 text-white">
               {['S.N.', 'Particulars', 'PO No.', 'Dated', 'PO amount (with GST)', 'Billed so far', 'Payment received', 'Tax deducted by client', 'Held back until handover', 'Balance still to receive'].map((h, i) => (
-                <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
+                <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
             </tr></thead>
             <tbody>
               {hasBf && (
-                <tr className="bg-[#1F3A52]/5">
+                <tr className="bg-slate-50">
                   <C> </C><C bold>{bfLabel}</C><C> </C><C mono>before {formatDate(REPORTING_START)}</C><C r> </C>
                   <C r>{formatINR(b.billed)}</C><C r>{formatINR(b.received + b.receivedSince)}</C><C r>{formatINR(b.tax)}</C><C r>{formatINR(b.held)}</C><C r bold>{formatINR(b.balance)}</C>
                 </tr>
@@ -246,64 +246,64 @@ function StatementPageInner() {
                 </tr>
               ))}
               {noPoInvs.length > 0 && (
-                <tr className="bg-[#B8860B]/5">
+                <tr className="bg-amber-50/60">
                   <C> </C><C>Invoices not linked to a PO listed here ({noPoInvs.length})</C><C> </C><C> </C><C r> </C>
                   <C r>{formatINR(noPo.billed)}</C><C r>{formatINR(noPo.paid)}</C><C r>{formatINR(noPo.tds)}</C><C r>{formatINR(noPo.held)}</C><C r bold>{formatINR(noPo.left)}</C>
                 </tr>
               )}
-              <tr className="bg-[#FFF200]/50 font-semibold">
+              <tr className="bg-slate-100 font-semibold">
                 <C> </C><C bold>TOTAL</C><C> </C><C> </C><C r bold>{formatINR(totals.po)}</C><C r bold>{formatINR(totals.billed)}</C>
                 <C r bold>{formatINR(totals.received)}</C><C r bold>{formatINR(totals.tds)}</C><C r bold>{formatINR(totals.held)}</C><C r bold>{formatINR(totals.balance)}</C>
               </tr>
             </tbody>
           </table>
-          {noPoInvs.length > 0 && <p className="mt-1 text-[11px] text-[#1C1C1A]/60">For invoices that are not linked to a PO there is nothing to measure against, so the last column is simply what the client still owes on those invoices (held-back amounts are shown in their own column, not counted as owed).</p>}
+          {noPoInvs.length > 0 && <p className="mt-1 text-[11px] text-slate-500">For invoices that are not linked to a PO there is nothing to measure against, so the last column is simply what the client still owes on those invoices (held-back amounts are shown in their own column, not counted as owed).</p>}
 
           <H>2. Proforma invoices sent</H>
-          {pis.length === 0 ? <p className="text-sm text-[#1C1C1A]/50">No proforma invoices yet.</p> : (
+          {pis.length === 0 ? <p className="text-sm text-slate-400">No proforma invoices yet.</p> : (
             <>
               <table className="w-full border-collapse text-sm">
-                <thead><tr className="bg-[#1F3A52] text-white">
+                <thead><tr className="bg-slate-900 text-white">
                   {['S.N.', 'Particulars', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status / note', 'Status'].map((h, i) => (
-                    <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i === 5 ? 'text-right' : 'text-left'}`}>{h}</th>))}
-                  <th className="border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold print:hidden">File</th>
+                    <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i === 5 ? 'text-right' : 'text-left'}`}>{h}</th>))}
+                  <th className="border border-slate-900 px-2 py-2 text-[11px] font-semibold print:hidden">File</th>
                 </tr></thead>
                 <tbody>
                   {pis.map((p, i) => (
-                    <tr key={p.pi_id} className={p.status === 'converted_to_invoice' ? 'text-[#1C1C1A]/60' : ''}>
+                    <tr key={p.pi_id} className={p.status === 'converted_to_invoice' ? 'text-slate-500' : ''}>
                       <C>{i + 1}</C><C>{piParticulars(p)}</C><C mono nowrap>{p.pi_number}</C><C mono>{formatDate(p.pi_date)}</C><C>{piFor(p)}</C>
                       <C r>{formatINR(p.amount)}</C><C>{piNote(p) || '—'}</C><C>{piStatus(p)}</C>
-                      <td className="border border-[#1C1C1A]/20 px-2 py-1.5 print:hidden">
+                      <td className="border border-slate-200 px-2 py-1.5 print:hidden">
                         {p.document_id ? (
-                          <button onClick={() => openPiFile(p)} disabled={openingPi === p.pi_id} className="font-sans text-xs text-[#1F3A52] underline disabled:opacity-50">
+                          <button onClick={() => openPiFile(p)} disabled={openingPi === p.pi_id} className="font-sans text-xs text-slate-900 underline disabled:opacity-50">
                             {openingPi === p.pi_id ? 'Opening…' : 'Open'}
                           </button>
-                        ) : <span className="text-xs text-[#1C1C1A]/40">—</span>}
+                        ) : <span className="text-xs text-slate-400">—</span>}
                       </td>
                     </tr>
                   ))}
-                  <tr className="bg-[#FFF200]/50 font-semibold">
+                  <tr className="bg-slate-100 font-semibold">
                     <C> </C><C bold>TOTAL</C><C> </C><C> </C><C> </C><C r bold>{formatINR(piTotals.all)}</C><C> </C><C> </C>
-                    <td className="border border-[#1C1C1A]/20 print:hidden" />
+                    <td className="border border-slate-200 print:hidden" />
                   </tr>
                   {piOpen.length !== pis.length && (
                     <tr>
                       <C> </C><C>Not yet converted to a tax invoice ({piOpen.length})</C><C> </C><C> </C><C> </C><C r>{formatINR(piTotals.open)}</C><C> </C><C> </C>
-                      <td className="border border-[#1C1C1A]/20 print:hidden" />
+                      <td className="border border-slate-200 print:hidden" />
                     </tr>
                   )}
                 </tbody>
               </table>
-              <p className="mt-1 text-[11px] text-[#1C1C1A]/60">A proforma invoice asks the client for payment before the tax invoice is raised. It is not a bill, so PI amounts are not counted in the balances above — the tax invoices below are.</p>
+              <p className="mt-1 text-[11px] text-slate-500">A proforma invoice asks the client for payment before the tax invoice is raised. It is not a bill, so PI amounts are not counted in the balances above — the tax invoices below are.</p>
             </>
           )}
 
           <H>3. Tax invoices raised</H>
-          {invs.length === 0 ? <p className="text-sm text-[#1C1C1A]/50">No tax invoices raised yet.</p> : (
+          {invs.length === 0 ? <p className="text-sm text-slate-400">No tax invoices raised yet.</p> : (
             <table className="w-full border-collapse text-sm">
-              <thead><tr className="bg-[#1F3A52] text-white">
+              <thead><tr className="bg-slate-900 text-white">
                 {['Invoice No.', 'Date', 'Taxable value', 'GST', 'Invoice total', 'Paid so far', 'Tax deducted / held', 'Still to pay'].map((h, i) => (
-                  <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i >= 2 ? 'text-right' : 'text-left'}`}>{h}</th>))}
+                  <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i >= 2 ? 'text-right' : 'text-left'}`}>{h}</th>))}
               </tr></thead>
               <tbody>
                 {groups.map((g) => (
@@ -314,11 +314,11 @@ function StatementPageInner() {
           )}
 
           <H>4. Money received in bank</H>
-          {pays.length === 0 ? <p className="text-sm text-[#1C1C1A]/50">No money received yet.</p> : (
+          {pays.length === 0 ? <p className="text-sm text-slate-400">No money received yet.</p> : (
             <table className="w-full border-collapse text-sm">
-              <thead><tr className="bg-[#1F3A52] text-white">
+              <thead><tr className="bg-slate-900 text-white">
                 {['Date', 'Reference / note', 'Type', 'For PO', 'Amount received', 'Used on invoices', 'Not yet matched'].map((h, i) => (
-                  <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
+                  <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
               </tr></thead>
               <tbody>
                 {receiptRows.map(({ p, used, unmatched }) => (
@@ -328,7 +328,7 @@ function StatementPageInner() {
                     <C r>{formatINR(p.amount_received)}</C><C r>{formatINR(used)}</C><C r>{formatINR(unmatched)}</C>
                   </tr>
                 ))}
-                <tr className="bg-[#FFF200]/50 font-semibold">
+                <tr className="bg-slate-100 font-semibold">
                   <C bold>TOTAL</C><C> </C><C> </C><C> </C>
                   <C r bold>{formatINR(sum(receiptRows, (r) => n(r.p.amount_received)))}</C><C r bold>{formatINR(sum(receiptRows, (r) => r.used))}</C><C r bold>{formatINR(sum(receiptRows, (r) => r.unmatched))}</C>
                 </tr>
@@ -336,7 +336,7 @@ function StatementPageInner() {
             </table>
           )}
 
-          <div className="mt-8 border-t border-[#1C1C1A]/20 pt-3 text-[11px] leading-relaxed text-[#1C1C1A]/70">
+          <div className="mt-8 border-t border-slate-200 pt-3 text-[11px] leading-relaxed text-slate-600">
             <b>How to read this statement.</b> <i>Balance still to receive</i> = PO amount − payment received − tax deducted by the client. It includes work not yet billed and any amount the client is holding back until handover.
             <i> Tax deducted</i> is TDS the client deposits with the tax department for us (we get credit for it). <i>Held back</i> is kept by the client until the site is handed over and is not overdue.
             <i> Not yet matched</i> is money received that has not yet been assigned to an invoice. Every figure is calculated from the recorded POs, invoices, payments and deductions.
@@ -350,7 +350,7 @@ function StatementPageInner() {
 function GroupRows({ g, settle }: { g: { k: string; name: string; rows: Inv[] }; settle: Record<string, Settle> }) {
   return (
     <>
-      <tr className="bg-[#1F3A52]/10"><td colSpan={8} className="border border-[#1C1C1A]/20 px-2 py-1.5 text-xs font-semibold">{g.name}</td></tr>
+      <tr className="bg-slate-100"><td colSpan={8} className="border border-slate-200 px-2 py-1.5 text-xs font-semibold">{g.name}</td></tr>
       {g.rows.map((i) => {
         const st = settle[i.invoice_id];
         return (
@@ -374,10 +374,10 @@ function GroupRows({ g, settle }: { g: { k: string; name: string; rows: Inv[] };
 }
 
 function H({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-2 mt-8 font-serif text-base font-semibold text-[#1F3A52]">{children}</h2>;
+  return <h2 className="mb-2 mt-8 font-serif text-base font-semibold text-slate-900">{children}</h2>;
 }
 function C({ children, r, mono, bold, nowrap }: { children: React.ReactNode; r?: boolean; mono?: boolean; bold?: boolean; nowrap?: boolean }) {
-  return <td className={`border border-[#1C1C1A]/20 px-2 py-1.5 ${r ? 'text-right font-mono tabular-nums' : ''} ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${nowrap ? 'whitespace-nowrap' : ''}`}>{children}</td>;
+  return <td className={`border border-slate-200 px-2 py-1.5 ${r ? 'text-right font-mono tabular-nums' : ''} ${mono ? 'font-mono' : ''} ${bold ? 'font-semibold' : ''} ${nowrap ? 'whitespace-nowrap' : ''}`}>{children}</td>;
 }
 
 export default function StatementPage() {

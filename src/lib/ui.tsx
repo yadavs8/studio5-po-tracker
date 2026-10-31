@@ -1,10 +1,13 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { formatCompact, formatINR } from '@/lib/format';
 
+// Shared building blocks for every page. Quiet, light surfaces: white cards on
+// a slate-50 page, slate text, one dark accent for primary actions.
+
 // ---------------------------------------------------------------------------
-// Layout primitives
+// Layout
 // ---------------------------------------------------------------------------
 
 export function PageHeader({
@@ -19,19 +22,17 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="relative overflow-hidden bg-gradient-to-br from-[#12283B] via-[#1F3A52] to-[#2F6E8E] px-8 py-8 text-white print:hidden">
-      <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[#E8C872]/10" />
-      <div className="pointer-events-none absolute -bottom-28 right-40 h-64 w-64 rounded-full bg-white/[0.04]" />
-      <div className="relative flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+    <header className="border-b border-slate-200 bg-white px-6 py-6 lg:px-8 print:hidden">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
           {icon && (
-            <span className="flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 backdrop-blur">
+            <span className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-slate-100 text-slate-700 [&_svg]:h-[18px] [&_svg]:w-[18px] [&_svg]:text-slate-700">
               {icon}
             </span>
           )}
-          <div>
-            <h1 className="font-serif text-3xl font-semibold tracking-tight">{title}</h1>
-            {subtitle && <p className="mt-1.5 max-w-3xl font-sans text-sm leading-relaxed text-white/70">{subtitle}</p>}
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
+            {subtitle && <p className="mt-1 max-w-3xl text-sm text-slate-500">{subtitle}</p>}
           </div>
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -42,58 +43,31 @@ export function PageHeader({
 
 export function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="mx-8 mt-4 flex items-start gap-3 rounded-lg border border-[#A13D2B]/25 bg-[#A13D2B]/5 px-4 py-3 font-sans text-sm text-[#A13D2B]">
-      <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-[#A13D2B] text-xs font-bold text-white">!</span>
+    <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 lg:mx-8">
       {message}
     </div>
   );
 }
 
 export function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="px-6 py-10 text-center font-sans text-sm leading-relaxed text-slate-400">
-      {text}
-    </div>
-  );
+  return <div className="px-6 py-10 text-center text-sm text-slate-400">{text}</div>;
 }
 
 export function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="card overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-3.5">
-        <h2 className="flex items-center gap-2.5 font-sans text-sm font-semibold text-[#1F3A52]">
-          <span className="h-4 w-1 rounded-full bg-[#E8C872]" />
-          {title}
-        </h2>
+    <section className="card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
         {action}
       </div>
       {children}
-    </div>
+    </section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Stat tile (KPI card) — icon, short amount, exact amount underneath
+// Number tile: label, short amount, exact amount underneath
 // ---------------------------------------------------------------------------
-
-function useCountUp(target: number, ms = 700) {
-  const [v, setV] = useState(0);
-  const from = useRef(0);
-  useEffect(() => {
-    const start = performance.now();
-    const a = from.current;
-    let raf = 0;
-    const tick = (t: number) => {
-      const p = Math.min(1, (t - start) / ms);
-      const e = 1 - Math.pow(1 - p, 3);
-      setV(a + (target - a) * e);
-      if (p < 1) raf = requestAnimationFrame(tick); else from.current = target;
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, ms]);
-  return v;
-}
 
 export function StatTile({
   icon,
@@ -110,24 +84,16 @@ export function StatTile({
   note?: string;
   help?: string;
 }) {
-  const shown = useCountUp(amount);
+  void icon; // tiles are text-only now; the colour dot marks the kind of figure
   return (
-    <div className="card rise group relative min-w-0 overflow-hidden px-5 py-4 transition-all hover:-translate-y-0.5 hover:shadow-lg">
-      <div className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${color}, ${color}55)` }} />
-      <div className="flex items-start justify-between gap-2">
-        <div className="font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={help}>
-          {label}
-          {help ? <span className="ml-1 cursor-help text-slate-400">ⓘ</span> : null}
-        </div>
-        {icon && (
-          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg" style={{ backgroundColor: `${color}14`, color }}>
-            {icon}
-          </span>
-        )}
+    <div className="card min-w-0 px-5 py-4">
+      <div className="flex items-center gap-2 text-xs font-medium text-slate-500" title={help}>
+        <span className="h-2 w-2 flex-none rounded-full" style={{ backgroundColor: color }} />
+        <span className="truncate">{label}</span>
       </div>
-      <div className="mt-2 whitespace-nowrap font-mono text-2xl font-semibold tabular-nums" style={{ color }}>{formatCompact(shown)}</div>
-      <div className="mt-0.5 whitespace-nowrap font-mono text-[11px] tabular-nums text-slate-400" title="Exact amount">{formatINR(amount)}</div>
-      <div className="mt-1.5 h-4 font-sans text-[11px] text-slate-400">{note ?? ''}</div>
+      <div className="mt-2 whitespace-nowrap font-mono text-2xl font-semibold tabular-nums text-slate-900">{formatCompact(amount)}</div>
+      <div className="mt-0.5 whitespace-nowrap font-mono text-xs tabular-nums text-slate-400" title="Exact amount">{formatINR(amount)}</div>
+      {note && <div className="mt-1 truncate text-xs text-slate-400">{note}</div>}
     </div>
   );
 }
@@ -136,15 +102,16 @@ export function StatTile({
 // Buttons
 // ---------------------------------------------------------------------------
 
-const BTN = 'inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 font-sans text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50';
+const BTN = 'inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50';
 export function PrimaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...props} className={`${BTN} bg-[#1F3A52] text-white shadow-sm hover:-translate-y-px hover:bg-[#2A4D6B] hover:shadow-md ${props.className ?? ''}`} />;
+  return <button {...props} className={`${BTN} bg-slate-900 text-white hover:bg-slate-700 ${props.className ?? ''}`} />;
 }
 export function GhostButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...props} className={`${BTN} border border-[#1F3A52]/30 bg-white text-[#1F3A52] hover:border-[#1F3A52] hover:bg-[#1F3A52] hover:text-white ${props.className ?? ''}`} />;
+  return <button {...props} className={`${BTN} border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 ${props.className ?? ''}`} />;
 }
-export const buttonClass = `${BTN} border border-[#1F3A52]/30 bg-white text-[#1F3A52] hover:border-[#1F3A52] hover:bg-[#1F3A52] hover:text-white`;
-export const buttonClassOnDark = `${BTN} border border-white/30 bg-white/10 text-white backdrop-blur hover:bg-white hover:text-[#1F3A52]`;
+export const buttonClass = `${BTN} border border-slate-300 bg-white text-slate-700 hover:bg-slate-50`;
+// Headers are light now, so header actions use the normal button look.
+export const buttonClassOnDark = buttonClass;
 
 // ---------------------------------------------------------------------------
 // Table
@@ -155,20 +122,18 @@ export function DataTable({ columns, children }: { columns: { label: string; ali
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="border-b border-slate-200 bg-slate-50/80">
-            {columns.map((c) => (
+          <tr className="border-b border-slate-200 bg-slate-50">
+            {columns.map((c, i) => (
               <th
-                key={c.label}
-                className={`whitespace-nowrap px-4 py-3 font-sans text-[11px] font-semibold uppercase tracking-wider text-slate-500 ${
-                  c.align === 'right' ? 'text-right' : 'text-left'
-                }`}
+                key={`${c.label}-${i}`}
+                className={`whitespace-nowrap px-4 py-2.5 text-xs font-medium text-slate-500 ${c.align === 'right' ? 'text-right' : 'text-left'}`}
               >
                 {c.label}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="[&>tr:nth-child(even)]:bg-slate-50/50 [&>tr:hover]:bg-[#1F3A52]/[0.04] [&>tr]:transition-colors">{children}</tbody>
+        <tbody className="divide-y divide-slate-100 [&>tr:hover]:bg-slate-50">{children}</tbody>
       </table>
     </div>
   );
@@ -176,58 +141,49 @@ export function DataTable({ columns, children }: { columns: { label: string; ali
 
 export function Td({ children, align = 'left', mono = false }: { children: React.ReactNode; align?: 'left' | 'right'; mono?: boolean }) {
   return (
-    <td
-      className={`border-b border-slate-100 px-4 py-3 font-sans text-sm text-slate-800 ${
-        align === 'right' ? 'text-right' : 'text-left'
-      } ${mono ? 'font-mono tabular-nums' : ''}`}
-    >
+    <td className={`px-4 py-3 text-sm text-slate-700 ${align === 'right' ? 'text-right' : 'text-left'} ${mono ? 'whitespace-nowrap font-mono tabular-nums' : ''}`}>
       {children}
     </td>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Status pill
+// Status label
 // ---------------------------------------------------------------------------
 
-const STATUS_COLORS: Record<string, string> = {
-  fully_settled: '#2F6B4F',
-  partially_settled: '#B8860B',
-  issued: '#1F3A52',
-  overdue: '#A13D2B',
-  pending: '#B8860B',
-  released: '#2F6B4F',
-  active: '#2F6B4F',
-  draft: '#6B7B8C',
-  sent: '#1F3A52',
-  approved: '#2F6B4F',
-  revision_requested: '#B8860B',
-  converted_to_invoice: '#2F6B4F',
-  completed: '#2F6B4F',
-  disputed: '#A13D2B',
-  cancelled: '#6B7B8C',
-  on_hold: '#B8860B',
+const STATUS_STYLE: Record<string, string> = {
+  fully_settled: 'bg-emerald-50 text-emerald-700',
+  released: 'bg-emerald-50 text-emerald-700',
+  active: 'bg-emerald-50 text-emerald-700',
+  approved: 'bg-emerald-50 text-emerald-700',
+  converted_to_invoice: 'bg-emerald-50 text-emerald-700',
+  completed: 'bg-emerald-50 text-emerald-700',
+  partially_settled: 'bg-amber-50 text-amber-700',
+  pending: 'bg-amber-50 text-amber-700',
+  revision_requested: 'bg-amber-50 text-amber-700',
+  on_hold: 'bg-amber-50 text-amber-700',
+  overdue: 'bg-red-50 text-red-700',
+  disputed: 'bg-red-50 text-red-700',
+  issued: 'bg-sky-50 text-sky-700',
+  sent: 'bg-sky-50 text-sky-700',
+  draft: 'bg-slate-100 text-slate-600',
+  cancelled: 'bg-slate-100 text-slate-600',
 };
 
 export function StatusBadge({ status }: { status: string }) {
-  const color = STATUS_COLORS[status] ?? '#6B7B8C';
   return (
-    <span
-      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 font-sans text-xs font-medium"
-      style={{ color, backgroundColor: `${color}14` }}
-    >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+    <span className={`inline-flex whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium capitalize ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-600'}`}>
       {status.replace(/_/g, ' ')}
     </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Form primitives
+// Forms
 // ---------------------------------------------------------------------------
 
 const INPUT =
-  'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-sans text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#1F3A52] focus:ring-2 focus:ring-[#1F3A52]/15';
+  'mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10';
 
 export function FormShell({
   onCancel,
@@ -243,18 +199,12 @@ export function FormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white px-6 py-5">
-      <div className="grid grid-cols-2 gap-4">{children}</div>
-      {error && (
-        <div className="mt-4 rounded-lg border border-[#A13D2B]/25 bg-[#A13D2B]/5 px-3 py-2 font-sans text-sm text-[#A13D2B]">{error}</div>
-      )}
+    <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
+      {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       <div className="mt-5 flex gap-2">
-        <PrimaryButton onClick={onSubmit} disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save'}
-        </PrimaryButton>
-        <button onClick={onCancel} className={`${BTN} text-slate-500 hover:bg-slate-100 hover:text-slate-800`}>
-          Cancel
-        </button>
+        <PrimaryButton onClick={onSubmit} disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</PrimaryButton>
+        <button onClick={onCancel} className={`${BTN} text-slate-500 hover:bg-slate-100 hover:text-slate-900`}>Cancel</button>
       </div>
     </div>
   );
@@ -276,8 +226,8 @@ export function FieldInput({
   full?: boolean;
 }) {
   return (
-    <div className={full ? 'col-span-2' : ''}>
-      <label className="block font-sans text-xs font-semibold text-slate-600">{label}</label>
+    <div className={full ? 'sm:col-span-2' : ''}>
+      <label className="block text-xs font-medium text-slate-600">{label}</label>
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={INPUT} />
     </div>
   );
@@ -297,14 +247,12 @@ export function FieldSelect({
   full?: boolean;
 }) {
   return (
-    <div className={full ? 'col-span-2' : ''}>
-      <label className="block font-sans text-xs font-semibold text-slate-600">{label}</label>
+    <div className={full ? 'sm:col-span-2' : ''}>
+      <label className="block text-xs font-medium text-slate-600">{label}</label>
       <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
         <option value="">Select…</option>
         {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
+          <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
     </div>
@@ -321,13 +269,13 @@ export function FieldFile({
   full?: boolean;
 }) {
   return (
-    <div className={full ? 'col-span-2' : ''}>
-      <label className="block font-sans text-xs font-semibold text-slate-600">{label}</label>
+    <div className={full ? 'sm:col-span-2' : ''}>
+      <label className="block text-xs font-medium text-slate-600">{label}</label>
       <input
         type="file"
         accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx"
         onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-        className="mt-1 block w-full rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 font-sans text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-[#1F3A52]/10 file:px-3 file:py-1 file:font-sans file:text-xs file:font-semibold file:text-[#1F3A52] hover:border-[#1F3A52]/50"
+        className="mt-1.5 block w-full rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-medium file:text-slate-700 hover:border-slate-400"
       />
     </div>
   );

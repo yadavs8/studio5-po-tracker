@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice, TaxInvoice, Deduction, InvoiceSettlementRow, DeductionType } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
@@ -212,6 +213,7 @@ function NewInvoiceForm({
 
   async function submit() {
     if (!invoiceNumber.trim() || !invoiceDate || !taxableValue) return;
+    if (!confirmBeforeStart(invoiceDate, 'tax invoice')) return;
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;

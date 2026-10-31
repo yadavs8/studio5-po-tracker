@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
@@ -221,6 +222,7 @@ function NewPoForm({
 
   async function submit() {
     if (!poNumber.trim() || !poDate || !totalValue) return;
+    if (!confirmBeforeStart(poDate, 'PO')) return;
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -276,6 +278,7 @@ function NewPiForm({
 
   async function submit() {
     if (!piNumber.trim() || !piDate || !amount) return;
+    if (!confirmBeforeStart(piDate, 'PI')) return;
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;

@@ -71,3 +71,52 @@ export async function loadBroughtForward(siteId?: string): Promise<Record<string
   Object.values(out).forEach((b) => { b.balance = b.billed - b.received - b.tax - b.receivedSince; });
   return out;
 }
+
+export interface PeriodFigures {
+  poValue: number;  // POs dated on/after the cut-off
+  billed: number;   // tax invoices dated on/after the cut-off
+  received: number; // money received on/after the cut-off
+  paidOn: number;   // payments matched to those invoices
+  tax: number;      // TDS / other deductions on those invoices
+  held: number;     // still held back on those invoices
+  waiting: number;  // still unpaid on those invoices
+}
+
+/** Per-site figures for the reporting period only (from REPORTING_START). */
+export async function loadPeriodFigures(): Promise<Record<string, PeriodFigures>> {
+  const [inv, set, pay, po, ded] = await Promise.all([
+    supabase.from('tax_invoice').select('invoice_id,site_id,invoice_date,gross_invoice_value'),
+    supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,remaining_balance'),
+    supabase.from('payment').select('site_id,payment_date,amount_received'),
+    supabase.from('purchase_order').select('site_id,po_date,total_value_with_gst'),
+    supabase.from('deduction').select('invoice_id,deduction_type,status,amount'),
+  ]);
+  const failed = [inv, set, pay, po, ded].find((r) => r.error);
+  if (failed?.error) throw new Error(failed.error.message);
+
+  const out: Record<string, PeriodFigures> = {};
+  const at = (s: string) => (out[s] ??= { poValue: 0, billed: 0, received: 0, paidOn: 0, tax: 0, held: 0, waiting: 0 });
+  const settle = new Map(((set.data ?? []) as { invoice_id: string; total_payments_allocated: number; remaining_balance: number }[]).map((r) => [r.invoice_id, r]));
+  const newInv = new Map<string, string>();
+
+  ((inv.data ?? []) as { invoice_id: string; site_id: string; invoice_date: string; gross_invoice_value: number }[])
+    .filter((i) => inPeriod(i.invoice_date))
+    .forEach((i) => {
+      newInv.set(i.invoice_id, i.site_id);
+      const f = at(i.site_id), s = settle.get(i.invoice_id);
+      f.billed += n(i.gross_invoice_value);
+      f.paidOn += n(s?.total_payments_allocated);
+      f.waiting += n(s?.remaining_balance ?? i.gross_invoice_value);
+    });
+  ((ded.data ?? []) as { invoice_id: string; deduction_type: string; status: string; amount: number }[]).forEach((d) => {
+    const s = newInv.get(d.invoice_id);
+    if (!s) return;
+    if (!isHold(d.deduction_type)) at(s).tax += n(d.amount);
+    else if (d.status === 'pending') at(s).held += n(d.amount);
+  });
+  ((pay.data ?? []) as { site_id: string; payment_date: string; amount_received: number }[])
+    .filter((p) => inPeriod(p.payment_date)).forEach((p) => { at(p.site_id).received += n(p.amount_received); });
+  ((po.data ?? []) as { site_id: string; po_date: string; total_value_with_gst: number }[])
+    .filter((p) => inPeriod(p.po_date)).forEach((p) => { at(p.site_id).poValue += n(p.total_value_with_gst); });
+  return out;
+}

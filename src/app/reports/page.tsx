@@ -8,10 +8,14 @@ import { friendlyError } from '@/lib/plain';
 import { formatDate } from '@/lib/format';
 import { downloadWorkbook, num, today, type Cell, type Sheet } from '@/lib/exportXlsx';
 import { PageHeader, ErrorBanner, PrimaryButton, FieldSelect } from '@/lib/ui';
+import { inPeriod, loadBroughtForward, loadPeriodFigures, REPORTING_START_LABEL } from '@/lib/period';
 
 interface SiteOpt { site_id: string; site_name: string; client: string; }
 
-const HEAD = (title: string): Cell[][] => [['STUDIO5 INTERIORS PVT LTD'], [title], [`As on ${today()}`], []];
+// Every report covers REPORTING_START onwards; earlier records appear only as
+// a brought-forward amount where money from them is still owed.
+const HEAD = (title: string): Cell[][] => [['STUDIO5 INTERIORS PVT LTD'], [title], [`As on ${today()} · from ${REPORTING_START_LABEL}`], []];
+const BF = `Brought forward (before ${REPORTING_START_LABEL})`;
 const sum = (rows: Cell[][], i: number) => rows.reduce((s, r) => s + num(r[i]), 0);
 
 export default function ReportsPage() {
@@ -41,26 +45,31 @@ export default function ReportsPage() {
 
   // ---- 1. All sites at a glance -----------------------------------------------------------
   const allSites = () => run('sites', async () => {
-    const d = must(await supabase.from('v_site_dashboard').select('*').order('client_name')) as Record<string, unknown>[];
-    const rows: Cell[][] = d.map((r, i) => [i + 1, String(r.client_name), String(r.site_name), num(r.current_contract_value), num(r.total_invoiced), num(r.total_collected),
-      num(r.normal_outstanding), num(r.retention_outstanding), num(r.advance_balance),
-      r.billing_progress_pct === null ? '' : num(r.billing_progress_pct), r.physical_progress_pct === null ? '' : num(r.physical_progress_pct)]);
-    rows.push(['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), '', '']);
-    downloadWorkbook('Studio5 - All sites summary', [{ name: 'All sites', widths: [6, 28, 38, 18, 18, 18, 20, 20, 18, 14, 14],
-      rows: [...HEAD('All sites at a glance'), ['S.N.', 'Client', 'Site', 'PO value (with GST)', 'Billed so far', 'Money received', 'Billed, waiting for payment', 'Held back until handover', 'Advance not yet used', 'Billed % of PO', 'Work done %'], ...rows] }]);
+    const [view, period, bfs] = await Promise.all([supabase.from('v_site_dashboard').select('*').order('client_name'), loadPeriodFigures(), loadBroughtForward()]);
+    const d = must(view) as Record<string, unknown>[];
+    const rows: Cell[][] = d.map((r, i) => {
+      const id = String(r.site_id), p = period[id], b = bfs[id];
+      return [i + 1, String(r.client_name), String(r.site_name), b?.balance ?? 0, p?.poValue ?? 0, p?.billed ?? 0, p?.received ?? 0,
+        num(r.normal_outstanding), num(r.retention_outstanding), num(r.advance_balance),
+        r.billing_progress_pct === null ? '' : num(r.billing_progress_pct), r.physical_progress_pct === null ? '' : num(r.physical_progress_pct)];
+    });
+    rows.push(['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), sum(rows, 9), '', '']);
+    const since = `since ${REPORTING_START_LABEL}`;
+    downloadWorkbook('Studio5 - All sites summary', [{ name: 'All sites', widths: [6, 28, 38, 22, 18, 18, 18, 20, 20, 18, 14, 14],
+      rows: [...HEAD('All sites at a glance'), ['S.N.', 'Client', 'Site', BF, `PO value ${since}`, `Billed ${since}`, `Money received ${since}`, 'Waiting for payment today', 'Held back until handover', 'Advance not yet used', 'Billed % of PO', 'Work done %'], ...rows] }]);
   });
 
   // ---- 2. PO-wise statement, all sites -----------------------------------------------------
   const poStatement = () => run('po', async () => {
     const [pos, st] = await Promise.all([supabase.from('v_po_summary').select('*').order('po_date'), supabase.from('site').select('site_id, site_name, client:client_id(display_name)')]);
-    const po = must(pos) as Record<string, unknown>[];
+    const po = (must(pos) as Record<string, unknown>[]).filter((p) => inPeriod(String(p.po_date)));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
     const list = po.map((p) => ({ p, s: siteMap.get(String(p.site_id)) })).sort((a, b) => (a.s?.client?.display_name ?? '').localeCompare(b.s?.client?.display_name ?? '') || String(a.p.po_date).localeCompare(String(b.p.po_date)));
     const rows: Cell[][] = list.map(({ p, s }, i) => [i + 1, s?.client?.display_name ?? '', s?.site_name ?? '', String(p.scope_description ?? ''), String(p.po_number), formatDate(String(p.po_date)),
       num(p.po_value), num(p.invoiced), num(p.received_bank), num(p.tds_and_other_deductions), num(p.retention_pending), num(p.balance_against_po)]);
     rows.push(['', 'TOTAL', '', '', '', '', sum(rows, 6), sum(rows, 7), sum(rows, 8), sum(rows, 9), sum(rows, 10), sum(rows, 11)]);
     downloadWorkbook('Studio5 - PO-wise statement (all sites)', [{ name: 'PO statement', widths: [6, 26, 34, 34, 34, 13, 18, 16, 18, 18, 18, 20],
-      rows: [...HEAD('Account statement - purchase order wise (all sites)'), ['S.N.', 'Client', 'Site', 'Particulars', 'PO No.', 'Dated', 'PO amount (with GST)', 'Billed so far', 'Payment received', 'Tax deducted by client', 'Held back until handover', 'Balance still to receive'], ...rows] }]);
+      rows: [...HEAD(`Account statement - purchase order wise (all sites, POs from ${REPORTING_START_LABEL})`), ['S.N.', 'Client', 'Site', 'Particulars', 'PO No.', 'Dated', 'PO amount (with GST)', 'Billed so far', 'Payment received', 'Tax deducted by client', 'Held back until handover', 'Balance still to receive'], ...rows] }]);
   });
 
   // ---- 3. Tower / sub-project payment details (your DSS sheets) ------------------------------
@@ -73,8 +82,9 @@ export default function ReportsPage() {
       supabase.from('sub_project').select('sub_project_id,name').eq('site_id', siteId).order('name'),
       supabase.from('deduction').select('invoice_id,deduction_type,amount,status'),
     ]);
-    const invs = must(inv) as Record<string, unknown>[];
+    const invs = (must(inv) as Record<string, unknown>[]).filter((i) => inPeriod(String(i.invoice_date)));
     const settle = new Map((must(set) as Record<string, unknown>[]).map((r) => [String(r.invoice_id), r]));
+    const siteBf = (await loadBroughtForward(siteId))[siteId];
     const subs = must(sub) as { sub_project_id: string; name: string }[];
     const ids = new Set(invs.map((i) => String(i.invoice_id)));
     const deds = (must(ded) as Record<string, unknown>[]).filter((d) => ids.has(String(d.invoice_id)));
@@ -98,7 +108,10 @@ export default function ReportsPage() {
       sheets.push({ name: g.name, widths: [6, 22, 14, 16, 14, 16, 18, 18, 22, 20], rows: [...HEAD(`${site.client} - ${site.site_name} - ${g.name} payment details`), HDR, ...rows, tot] });
       summary.push([g.name, num(tot[5]), num(tot[6]), num(tot[7]), num(tot[8]), num(tot[9])]);
     });
-    if (!sheets.length) throw new Error('This site has no tax invoices yet.');
+    if (!sheets.length && !siteBf) throw new Error(`This site has no tax invoices from ${REPORTING_START_LABEL} onwards.`);
+    if (siteBf && Math.abs(siteBf.billed) > 0.5) {
+      summary.unshift([BF, siteBf.billed, siteBf.received + siteBf.receivedSince, siteBf.tax, siteBf.held, siteBf.balance]);
+    }
     summary.push(['TOTAL', sum(summary, 1), sum(summary, 2), sum(summary, 3), sum(summary, 4), sum(summary, 5)]);
     sheets.unshift({ name: 'Summary', widths: [30, 18, 18, 18, 22, 20],
       rows: [...HEAD(`${site.client} - ${site.site_name} - summary by tower / package`), ['Tower / package', 'Tax invoices', 'Payments received', 'Tax deducted (TDS)', 'Held back until handover', 'Balance still to pay'], ...summary] });
@@ -114,8 +127,9 @@ export default function ReportsPage() {
     ]);
     const dates = new Map((must(inv) as { invoice_id: string; invoice_date: string }[]).map((i) => [i.invoice_id, i.invoice_date]));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
+    const bfs = await loadBroughtForward();
     const now = Date.now();
-    const list = (must(set) as Record<string, unknown>[]).map((r) => {
+    const list = (must(set) as Record<string, unknown>[]).filter((r) => inPeriod(dates.get(String(r.invoice_id)))).map((r) => {
       const d = dates.get(String(r.invoice_id)) ?? '';
       const days = d ? Math.max(0, Math.floor((now - new Date(d).getTime()) / 86400000)) : 0;
       return { r, d, days, s: siteMap.get(String(r.site_id)) };
@@ -123,8 +137,14 @@ export default function ReportsPage() {
     const bucket = (n: number) => (n <= 30 ? '0-30 days' : n <= 60 ? '31-60 days' : n <= 90 ? '61-90 days' : 'Over 90 days');
     const rows: Cell[][] = list.map(({ r, d, days, s }, i) => [i + 1, s?.client?.display_name ?? '', s?.site_name ?? '', String(r.invoice_number), d ? formatDate(d) : '', days, bucket(days),
       num(r.gross_invoice_value), num(r.total_payments_allocated), num(r.total_deducted), num(r.remaining_balance)]);
+    // Money still owed from before the cut-off: one line per site, so it is never dropped.
+    Object.entries(bfs).filter(([, b]) => b.balance > 0.5).forEach(([sid, b]) => {
+      const s = siteMap.get(sid);
+      rows.push([rows.length + 1, s?.client?.display_name ?? '', s?.site_name ?? '', BF, '', '', 'Brought forward', b.billed, b.received + b.receivedSince, b.tax, b.balance]);
+    });
     rows.push(['', 'TOTAL', '', '', '', '', '', sum(rows, 7), sum(rows, 8), sum(rows, 9), sum(rows, 10)]);
     const byBucket = ['0-30 days', '31-60 days', '61-90 days', 'Over 90 days'].map((b): Cell[] => [b, list.filter((x) => bucket(x.days) === b).reduce((a, x) => a + num(x.r.remaining_balance), 0)]);
+    byBucket.push([BF, Object.values(bfs).filter((b) => b.balance > 0.5).reduce((a, b) => a + b.balance, 0)]);
     downloadWorkbook('Studio5 - Money waiting to be paid', [
       { name: 'By invoice', widths: [6, 26, 34, 22, 14, 10, 14, 16, 16, 16, 18],
         rows: [...HEAD('Invoices waiting for payment - oldest first'), ['S.N.', 'Client', 'Site', 'Invoice No.', 'Invoice date', 'Days old', 'Age', 'Invoice amount', 'Paid so far', 'Tax deducted / held', 'Still to pay'], ...rows] },
@@ -144,14 +164,14 @@ export default function ReportsPage() {
     (must(al) as { payment_id: string; amount_allocated: number }[]).forEach((a) => used.set(a.payment_id, (used.get(a.payment_id) ?? 0) + num(a.amount_allocated)));
     const poNo = new Map((must(po) as { po_id: string; po_number: string }[]).map((p) => [p.po_id, p.po_number]));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
-    const rows: Cell[][] = (must(pay) as Record<string, unknown>[]).map((p, i) => {
+    const rows: Cell[][] = (must(pay) as Record<string, unknown>[]).filter((p) => inPeriod(String(p.payment_date))).map((p, i) => {
       const s = siteMap.get(String(p.site_id)); const u = used.get(String(p.payment_id)) ?? 0;
       return [i + 1, formatDate(String(p.payment_date)), s?.client?.display_name ?? '', s?.site_name ?? '', p.po_id ? poNo.get(String(p.po_id)) ?? '' : '', String(p.payment_type).replace(/_/g, ' '),
         String(p.payment_mode).replace(/_/g, ' '), String(p.utr_or_reference ?? ''), String(p.remarks ?? ''), num(p.amount_received), u, num(p.amount_received) - u];
     });
     rows.push(['', 'TOTAL', '', '', '', '', '', '', '', sum(rows, 9), sum(rows, 10), sum(rows, 11)]);
     downloadWorkbook('Studio5 - Payments register', [{ name: 'Payments', widths: [6, 13, 24, 32, 30, 18, 14, 20, 46, 18, 18, 18],
-      rows: [...HEAD('Money received in bank - all payments'), ['S.N.', 'Date', 'Client', 'Site', 'For PO', 'Type', 'Mode', 'Reference', 'Note', 'Amount received', 'Used on invoices', 'Not yet matched'], ...rows] }]);
+      rows: [...HEAD(`Money received in bank - payments from ${REPORTING_START_LABEL}`), ['S.N.', 'Date', 'Client', 'Site', 'For PO', 'Type', 'Mode', 'Reference', 'Note', 'Amount received', 'Used on invoices', 'Not yet matched'], ...rows] }]);
   });
 
   // ---- 6. Data health ---------------------------------------------------------------------

@@ -12,6 +12,7 @@ import { FileText, Receipt, Wallet, Hourglass, Clock, ShieldCheck, FileSpreadshe
 import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, buttonClassOnDark, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
 import { WORDS, HELP } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
+import { inPeriod, loadBroughtForward, confirmBeforeStart, REPORTING_START_LABEL, type BroughtForward } from '@/lib/period';
 
 interface PoRow {
   po_id: string; po_number: string; po_date: string; scope_description: string | null; sub_project_id: string | null;
@@ -42,6 +43,8 @@ function SitePageInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<{ kind: EditKind; id: string } | null>(null);
+  const [bf, setBf] = useState<BroughtForward | null>(null);
+  const [showEarlier, setShowEarlier] = useState(false);
 
   useEffect(() => { load(); }, [id]);
 
@@ -75,17 +78,32 @@ function SitePageInner() {
         const { data: a, error: ae } = await supabase.from('payment_allocation').select('payment_id,invoice_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
         if (ae) setError(ae.message); else setAllocs((a ?? []) as AllocRow[]);
       }
+      try { setBf((await loadBroughtForward(id))[id] ?? null); } catch (e) { setError((e as Error).message); }
       setLoading(false);
     })();
   }
 
   const invPo = useMemo(() => Object.fromEntries(invs.map((i) => [i.invoice_id, i.po_id])), [invs]);
-  const totalReceived = pays.reduce((s, p) => s + Number(p.amount_received), 0);
-  const sumPo = (k: keyof PoRow) => pos.reduce((s, p) => s + Number(p[k] ?? 0), 0);
+
+  // Listed by default: records from the reporting start, plus any older PO
+  // that has something dated after it. "Show earlier records" lists all.
+  const vPis = showEarlier ? pis : pis.filter((p) => inPeriod(p.pi_date));
+  const vInvs = showEarlier ? invs : invs.filter((i) => inPeriod(i.invoice_date));
+  const vPays = showEarlier ? pays : pays.filter((p) => inPeriod(p.payment_date));
+  const vPos = showEarlier ? pos : pos.filter((p) => inPeriod(p.po_date)
+    || vInvs.some((i) => i.po_id === p.po_id) || vPis.some((x) => x.po_id === p.po_id) || vPays.some((y) => y.po_id === p.po_id));
+  const earlierCount = (pis.length - vPis.length) + (invs.length - vInvs.length) + (pays.length - vPays.length) + (pos.length - vPos.length);
+  const hiddenCount = showEarlier
+    ? pis.filter((p) => !inPeriod(p.pi_date)).length + invs.filter((i) => !inPeriod(i.invoice_date)).length + pays.filter((p) => !inPeriod(p.payment_date)).length
+    : earlierCount;
+
+  const totalReceived = vPays.reduce((s, p) => s + Number(p.amount_received), 0);
+  const totalBilled = vInvs.reduce((s, i) => s + Number(i.gross_invoice_value), 0);
+  const sumPo = (k: keyof PoRow) => vPos.reduce((s, p) => s + Number(p[k] ?? 0), 0);
 
   // receipts belonging to a PO: tagged to it, or allocated to one of its invoices
   function receiptsFor(poId: string | null) {
-    return pays
+    return vPays
       .map((p) => {
         const toPo = allocs.filter((a) => a.payment_id === p.payment_id && invPo[a.invoice_id ?? ''] === poId && a.invoice_id);
         const applied = toPo.reduce((s, a) => s + Number(a.amount_allocated), 0);
@@ -114,10 +132,21 @@ function SitePageInner() {
         {loading ? <PageSkeleton /> : (
           <>
             {/* SITE TOTALS */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#1F3A52]/10 bg-white px-4 py-2.5 font-sans text-xs text-[#1C1C1A]/70">
+              <span>
+                {showEarlier ? 'Showing every record, including those before ' : 'Showing records from '}{REPORTING_START_LABEL}
+                {!showEarlier && bf && Math.abs(bf.balance) > 0.5 && <> · brought forward from before: <b className="font-mono">{formatINR(bf.balance)}</b></>}
+              </span>
+              {hiddenCount > 0 && (
+                <button onClick={() => setShowEarlier((v) => !v)} className="font-medium text-[#1F3A52] underline">
+                  {showEarlier ? `Hide records before ${REPORTING_START_LABEL}` : `Show ${hiddenCount} earlier record${hiddenCount === 1 ? '' : 's'}`}
+                </button>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-              <StatTile icon={<FileText size={18} />} label={WORDS.poValue} help={HELP.poValue} amount={sumPo('po_value')} color="#1F3A52" />
-              <StatTile icon={<Receipt size={18} />} label={WORDS.billed} help={HELP.billed} amount={dash?.total_invoiced ?? 0} color="#1F3A52" />
-              <StatTile icon={<Wallet size={18} />} label={WORDS.received} help={HELP.received} amount={totalReceived} color="#2F6B4F" />
+              <StatTile icon={<FileText size={18} />} label={WORDS.poValue} help={HELP.poValue} amount={sumPo('po_value')} color="#1F3A52" note={showEarlier ? undefined : 'POs listed below'} />
+              <StatTile icon={<Receipt size={18} />} label={WORDS.billed} help={HELP.billed} amount={totalBilled} color="#1F3A52" note={showEarlier ? undefined : `since ${REPORTING_START_LABEL}`} />
+              <StatTile icon={<Wallet size={18} />} label={WORDS.received} help={HELP.received} amount={totalReceived} color="#2F6B4F" note={showEarlier ? undefined : `since ${REPORTING_START_LABEL}`} />
               <StatTile icon={<Hourglass size={18} />} label={WORDS.stillToReceive} help={HELP.stillToReceive} amount={sumPo('balance_against_po')} color="#A13D2B" note="whether billed yet or not" />
               <StatTile icon={<Clock size={18} />} label={WORDS.billedUnpaid} help={HELP.billedUnpaid} amount={dash?.normal_outstanding ?? 0} color="#A13D2B" note="the client owes this today" />
               <StatTile icon={<ShieldCheck size={18} />} label={WORDS.held} help={HELP.held} amount={dash?.retention_outstanding ?? 0} color="#B8860B" note="not overdue - kept separate" />
@@ -150,8 +179,8 @@ function SitePageInner() {
             </Panel>
 
             {/* ONE BLOCK PER PO */}
-            {pos.length === 0 && <EmptyState text="No purchase orders recorded for this site yet. Add one under PO & PI." />}
-            {pos.map((po) => (
+            {vPos.length === 0 && <EmptyState text={pos.length ? `No purchase orders from ${REPORTING_START_LABEL} onwards.` : 'No purchase orders recorded for this site yet. Add one under PO & PI.'} />}
+            {vPos.map((po) => (
               <Panel
                 key={po.po_id}
                 title={`PO ${po.po_number}${po.scope_description ? ' — ' + po.scope_description : ''}  ·  ${formatDate(po.po_date)}`}
@@ -164,8 +193,8 @@ function SitePageInner() {
               >
                 <PoSummary po={po} />
                 <Detail
-                  pis={pis.filter((p) => p.po_id === po.po_id)}
-                  invs={invs.filter((i) => i.po_id === po.po_id)}
+                  pis={vPis.filter((p) => p.po_id === po.po_id)}
+                  invs={vInvs.filter((i) => i.po_id === po.po_id)}
                   settle={settle}
                   receipts={receiptsFor(po.po_id)}
                   onEdit={(kind, id) => setEditing({ kind, id })}
@@ -175,8 +204,8 @@ function SitePageInner() {
 
             {/* NOT LINKED TO A PO */}
             {(() => {
-              const uPis = pis.filter((p) => !p.po_id);
-              const uInvs = invs.filter((i) => !i.po_id);
+              const uPis = vPis.filter((p) => !p.po_id);
+              const uInvs = vInvs.filter((i) => !i.po_id);
               const uRec = receiptsFor(null);
               if (!uPis.length && !uInvs.length && !uRec.length) return null;
               return (
@@ -412,6 +441,8 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
 
   async function submit() {
     if (!row) return;
+    const dateKey = ['po_date', 'pi_date', 'invoice_date', 'payment_date'].find((k) => k in form);
+    if (dateKey && form[dateKey] !== String(row[dateKey] ?? '') && !confirmBeforeStart(form[dateKey], cfg.label.toLowerCase())) return;
     setSubmitting(true);
     setSaveError(null);
     let newDocId: string | null = null;

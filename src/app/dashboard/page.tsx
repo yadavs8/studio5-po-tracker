@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, FileSpreadsheet } from 'lucide-react';
+import { ChevronRight, FileSpreadsheet, UploadCloud } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { SiteDashboardRow } from '@/lib/types';
 import { formatINR } from '@/lib/format';
@@ -71,7 +71,19 @@ export default function DashboardPage() {
       <PageHeader
         title="Overview"
         subtitle={`All sites from ${REPORTING_START_LABEL}.`}
-        actions={<Link href="/reports" className={buttonClass}><FileSpreadsheet size={15} /> Reports</Link>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Link
+              href="/upload"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"
+            >
+              <UploadCloud size={15} /> Upload document
+            </Link>
+            <Link href="/reports" className={buttonClass}>
+              <FileSpreadsheet size={15} /> Reports
+            </Link>
+          </div>
+        }
       />
       {error && <ErrorBanner message={error} />}
 

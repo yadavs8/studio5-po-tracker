@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 
-export type UploadDocType = 'po' | 'pi' | 'invoice' | 'payment_advice';
+export type UploadDocType = 'po' | 'pi' | 'invoice' | 'payment_advice' | 'other';
 
 export const DOCUMENT_BUCKET = 'studio5-documents';
 
@@ -70,4 +70,25 @@ export async function discardDocument(documentId: string | null): Promise<void> 
   const { data: doc } = await supabase.from('document').select('file_url').eq('document_id', documentId).maybeSingle();
   if (doc) await supabase.storage.from(DOCUMENT_BUCKET).remove([doc.file_url]);
   await supabase.from('document').delete().eq('document_id', documentId);
+}
+
+/**
+ * Replaces an existing document with a new one, deleting the old storage file and record
+ * so no stale revisions or orphan files remain.
+ */
+export async function replaceDocument(
+  oldDocumentId: string | null,
+  file: File,
+  documentType: UploadDocType
+): Promise<string> {
+  const newDocId = await uploadDocument(file, documentType);
+  if (!newDocId) throw new Error('File upload produced no document ID');
+  if (oldDocumentId) {
+    try {
+      await discardDocument(oldDocumentId);
+    } catch {
+      // Non-critical if old file cleanup fails
+    }
+  }
+  return newDocId;
 }

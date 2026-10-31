@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { documentDownloadUrl } from '@/lib/documents';
 import { formatINR, formatDate } from '@/lib/format';
 import { PageHeader, ErrorBanner, Panel, StatusBadge, buttonClass } from '@/lib/ui';
-import { ArrowLeft, Download, ExternalLink, FileText } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, FileText, UploadCloud } from 'lucide-react';
 
 interface PiDetail {
   pi_id: string;
@@ -104,25 +104,33 @@ function PiDetailPageInner() {
         title={pi?.pi_number ?? 'Proforma invoice'}
         subtitle={subtitle}
         actions={
-          pi?.document_id ? (
-            <div className="flex items-center gap-2">
-              <Link
-                href={`/document/?id=${pi.document_id}&title=${encodeURIComponent(pi.pi_number)}`}
-                className={buttonClass}
-              >
-                <ExternalLink size={15} /> Open document
-              </Link>
-              <button
-                onClick={handleDownload}
-                disabled={downloading}
-                className={buttonClass}
-              >
-                <Download size={15} /> {downloading ? 'Downloading…' : 'Download'}
-              </button>
-            </div>
-          ) : (
-            <span className="text-xs text-slate-400">No file attached</span>
-          )
+          <div className="flex items-center gap-2">
+            <Link
+              href="/upload"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"
+            >
+              <UploadCloud size={14} /> Upload revision
+            </Link>
+            {pi?.document_id ? (
+              <>
+                <Link
+                  href={`/document/?id=${pi.document_id}&title=${encodeURIComponent(pi.pi_number)}`}
+                  className={buttonClass}
+                >
+                  <ExternalLink size={15} /> Open document
+                </Link>
+                <button
+                  onClick={handleDownload}
+                  disabled={downloading}
+                  className={buttonClass}
+                >
+                  <Download size={15} /> {downloading ? 'Downloading…' : 'Download'}
+                </button>
+              </>
+            ) : (
+              <span className="text-xs text-slate-400">No file attached</span>
+            )}
+          </div>
         }
       />
       {error && <ErrorBanner message={error} />}

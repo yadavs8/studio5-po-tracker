@@ -8,7 +8,7 @@ import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
 import { friendlyError } from '@/lib/plain';
 import { formatINR, formatDate } from '@/lib/format';
-import { FileSpreadsheet, ArrowLeft, Pencil } from 'lucide-react';
+import { FileSpreadsheet, ArrowLeft, Pencil, UploadCloud } from 'lucide-react';
 import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
 import { WORDS, HELP } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
@@ -96,10 +96,26 @@ function SitePageInner() {
       .filter((r) => r.belongs);
   }
 
+  const hasActivity = vPos.length > 0 || vPis.length > 0 || vInvs.length > 0 || vPays.length > 0;
+
   return (
     <div className="pb-12">
       <PageHeader
-        actions={<Link href={`/site/statement/?id=${id}`} className={buttonClass}><FileSpreadsheet size={15} /> Account statement</Link>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Link
+              href="/upload"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"
+            >
+              <UploadCloud size={15} /> Upload document
+            </Link>
+            {hasActivity && (
+              <Link href={`/site/statement/?id=${id}`} className={buttonClass}>
+                <FileSpreadsheet size={15} /> Account statement
+              </Link>
+            )}
+          </div>
+        }
         title={site?.site_name ?? 'Site'}
         subtitle={site?.client ?? ''}
       />

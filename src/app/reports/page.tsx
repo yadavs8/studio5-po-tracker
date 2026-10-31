@@ -26,10 +26,17 @@ export default function ReportsPage() {
   const [done, setDone] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.from('site').select('site_id, site_name, client:client_id(display_name)').order('site_name').then(({ data, error }) => {
-      if (error) { setError(friendlyError(error)); return; }
-      setSites(((data ?? []) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])
-        .map((s) => ({ site_id: s.site_id, site_name: s.site_name, client: s.client?.display_name ?? '' })));
+    Promise.all([
+      supabase.from('site').select('site_id, site_name, client:client_id(display_name)').order('site_name'),
+      supabase.from('tax_invoice').select('site_id'),
+    ]).then(([siteRes, invRes]) => {
+      if (siteRes.error) { setError(friendlyError(siteRes.error)); return; }
+      const activeIds = new Set((invRes.data ?? []).map((i: { site_id: string }) => i.site_id));
+      setSites(
+        ((siteRes.data ?? []) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])
+          .filter((s) => activeIds.has(s.site_id))
+          .map((s) => ({ site_id: s.site_id, site_name: s.site_name, client: s.client?.display_name ?? '' }))
+      );
     });
   }, []);
 

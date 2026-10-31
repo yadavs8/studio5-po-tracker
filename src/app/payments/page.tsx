@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
 import type { Client, Site, Payment, InvoiceSettlementRow, PaymentType, PaymentMode } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
@@ -200,6 +201,7 @@ function NewPaymentForm({
 
   async function submit() {
     if (!date || !amount) { setErr('Please enter the date and the amount received.'); return; }
+    if (!confirmBeforeStart(date, 'payment')) return;
     if (left < -0.005) { setErr('You have matched more than the amount received. Please reduce the amounts matched to invoices.'); return; }
     setSubmitting(true);
     setErr(null);

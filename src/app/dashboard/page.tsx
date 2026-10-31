@@ -7,39 +7,62 @@ import { supabase } from '@/lib/supabase';
 import type { SiteDashboardRow } from '@/lib/types';
 import { formatINR, formatCompact, formatPct, formatDate } from '@/lib/format';
 import { PageHeader, ErrorBanner, EmptyState, DataTable, Td, StatTile, Panel, buttonClassOnDark } from '@/lib/ui';
+import { loadBroughtForward, loadPeriodFigures, REPORTING_START_LABEL, type BroughtForward, type PeriodFigures } from '@/lib/period';
 
 const C = { received: '#2F6B4F', tax: '#6B7B8C', held: '#B8860B', waiting: '#C0392B', navy: '#1F3A52', gold: '#E8C872' };
 
-// Every figure comes straight from v_site_dashboard, derived from tax_invoice, payment_allocation and deduction.
+const NO_PERIOD: PeriodFigures = { poValue: 0, billed: 0, received: 0, paidOn: 0, tax: 0, held: 0, waiting: 0 };
+const NO_BF: BroughtForward = { billed: 0, received: 0, tax: 0, held: 0, receivedSince: 0, balance: 0 };
+
+// Billing figures (PO value, billed, received, the money bar) cover the
+// reporting period from REPORTING_START; what was owed before it is one
+// brought-forward figure. "Waiting", "held" and "advance" are today's
+// balances from v_site_dashboard, so old money still owed is never dropped.
 export default function DashboardPage() {
   const [rows, setRows] = useState<SiteDashboardRow[]>([]);
+  const [period, setPeriod] = useState<Record<string, PeriodFigures>>({});
+  const [bfs, setBfs] = useState<Record<string, BroughtForward>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase
-      .from('v_site_dashboard')
-      .select('*')
-      .order('normal_outstanding', { ascending: false })
-      .then(({ data, error }) => {
-        if (error) setError(error.message);
-        else setRows((data ?? []) as SiteDashboardRow[]);
-        setLoading(false);
-      });
+    (async () => {
+      try {
+        const [view, p, b] = await Promise.all([
+          supabase.from('v_site_dashboard').select('*').order('normal_outstanding', { ascending: false }),
+          loadPeriodFigures(),
+          loadBroughtForward(),
+        ]);
+        if (view.error) throw new Error(view.error.message);
+        setRows((view.data ?? []) as SiteDashboardRow[]);
+        setPeriod(p);
+        setBfs(b);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      setLoading(false);
+    })();
   }, []);
 
+  const pf = (id: string) => period[id] ?? NO_PERIOD;
+  const bfOf = (id: string) => bfs[id] ?? NO_BF;
   const totals = rows.reduce(
-    (acc, r) => ({
-      contract: acc.contract + Number(r.current_contract_value ?? 0),
-      invoiced: acc.invoiced + Number(r.total_invoiced ?? 0),
-      collected: acc.collected + Number(r.total_collected ?? 0),
-      outstanding: acc.outstanding + Number(r.normal_outstanding ?? 0),
-      retention: acc.retention + Number(r.retention_outstanding ?? 0),
-      advance: acc.advance + Number(r.advance_balance ?? 0),
-    }),
-    { contract: 0, invoiced: 0, collected: 0, outstanding: 0, retention: 0, advance: 0 }
+    (acc, r) => {
+      const p = pf(r.site_id);
+      return {
+        contract: acc.contract + p.poValue,
+        invoiced: acc.invoiced + p.billed,
+        collected: acc.collected + p.received,
+        broughtForward: acc.broughtForward + bfOf(r.site_id).balance,
+        outstanding: acc.outstanding + Number(r.normal_outstanding ?? 0),
+        retention: acc.retention + Number(r.retention_outstanding ?? 0),
+        advance: acc.advance + Number(r.advance_balance ?? 0),
+        paidOn: acc.paidOn + p.paidOn, tax: acc.tax + p.tax, held: acc.held + p.held, waiting: acc.waiting + p.waiting,
+      };
+    },
+    { contract: 0, invoiced: 0, collected: 0, broughtForward: 0, outstanding: 0, retention: 0, advance: 0, paidOn: 0, tax: 0, held: 0, waiting: 0 }
   );
-  const taxDeducted = Math.max(0, totals.invoiced - totals.collected - totals.outstanding - totals.retention);
+  const since = `since ${REPORTING_START_LABEL}`;
 
   return (
     <div className="min-h-screen bg-[#F3F5F8] pb-12">
@@ -52,11 +75,12 @@ export default function DashboardPage() {
       {error && <ErrorBanner message={error} />}
 
       <div className="space-y-8 px-8 py-8">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-          <StatTile icon={<FileText size={18} />} label="PO value (with GST)" note="only POs entered so far" amount={totals.contract} color="#1F3A52" />
-          <StatTile icon={<Receipt size={18} />} label="Billed so far" note="incl. invoices with no PO yet" amount={totals.invoiced} color="#2F6E8E" />
-          <StatTile icon={<Wallet size={18} />} label="Money received in bank" amount={totals.collected} color={C.received} />
-          <StatTile icon={<Clock size={18} />} label="Billed, waiting for payment" note="client owes this today" amount={totals.outstanding} color={C.waiting} />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
+          <StatTile icon={<Clock size={18} />} label="Brought forward" note={`owed from before ${REPORTING_START_LABEL}`} amount={totals.broughtForward} color={C.navy} />
+          <StatTile icon={<FileText size={18} />} label="PO value (with GST)" note={`POs ${since}`} amount={totals.contract} color="#1F3A52" />
+          <StatTile icon={<Receipt size={18} />} label="Billed" note={since} amount={totals.invoiced} color="#2F6E8E" />
+          <StatTile icon={<Wallet size={18} />} label="Money received in bank" note={since} amount={totals.collected} color={C.received} />
+          <StatTile icon={<Clock size={18} />} label="Billed, waiting for payment" note="client owes this today (incl. brought forward)" amount={totals.outstanding} color={C.waiting} />
           <StatTile icon={<ShieldCheck size={18} />} label="Held back until handover" note="not overdue — kept separate" amount={totals.retention} color={C.held} />
           <StatTile icon={<PiggyBank size={18} />} label="Advance not yet used" amount={totals.advance} color={C.tax} />
         </div>
@@ -67,15 +91,15 @@ export default function DashboardPage() {
           <EmptyState text="No sites yet — add clients and sites under Clients & sites first." />
         ) : (
           <>
-            <Panel title="Where the billed money stands (all sites)">
+            <Panel title={`Where the money billed ${since} stands (all sites)`}>
               <div className="px-6 py-5">
                 <MoneyBar
                   total={totals.invoiced}
                   segments={[
-                    { label: 'Received in bank', v: totals.collected, c: C.received },
-                    { label: 'Tax deducted by clients', v: taxDeducted, c: C.tax },
-                    { label: 'Held back until handover', v: totals.retention, c: C.held },
-                    { label: 'Waiting for payment', v: totals.outstanding, c: C.waiting },
+                    { label: 'Paid', v: totals.paidOn, c: C.received },
+                    { label: 'Tax deducted by clients', v: totals.tax, c: C.tax },
+                    { label: 'Held back until handover', v: totals.held, c: C.held },
+                    { label: 'Waiting for payment', v: totals.waiting, c: C.waiting },
                   ]}
                   big
                 />
@@ -87,7 +111,7 @@ export default function DashboardPage() {
                 <span className="h-5 w-1 rounded-full bg-[#E8C872]" /> Your sites
               </h2>
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                {rows.map((r, i) => <SiteCard key={r.site_id} r={r} delay={i * 40} />)}
+                {rows.map((r, i) => <SiteCard key={r.site_id} r={r} p={pf(r.site_id)} bf={bfOf(r.site_id).balance} delay={i * 40} />)}
               </div>
             </section>
 
@@ -95,8 +119,9 @@ export default function DashboardPage() {
               <DataTable
                 columns={[
                   { label: 'Client' }, { label: 'Site' },
-                  { label: 'PO value', align: 'right' }, { label: 'Billed', align: 'right' }, { label: 'Received', align: 'right' },
-                  { label: 'Waiting for payment', align: 'right' }, { label: 'Held till handover', align: 'right' },
+                  { label: 'Brought forward', align: 'right' },
+                  { label: `PO value ${since}`, align: 'right' }, { label: `Billed ${since}`, align: 'right' }, { label: `Received ${since}`, align: 'right' },
+                  { label: 'Waiting for payment today', align: 'right' }, { label: 'Held till handover', align: 'right' },
                   { label: 'Billed vs work done' },
                 ]}
               >
@@ -104,9 +129,10 @@ export default function DashboardPage() {
                   <tr key={r.site_id}>
                     <Td>{r.client_name}</Td>
                     <Td><Link href={`/site/?id=${r.site_id}`} className="font-medium text-[#1F3A52] hover:underline">{r.site_name}</Link></Td>
-                    <Td align="right" mono>{formatINR(r.current_contract_value)}</Td>
-                    <Td align="right" mono>{formatINR(r.total_invoiced)}</Td>
-                    <Td align="right" mono>{formatINR(r.total_collected)}</Td>
+                    <Td align="right" mono>{formatINR(bfOf(r.site_id).balance)}</Td>
+                    <Td align="right" mono>{formatINR(pf(r.site_id).poValue)}</Td>
+                    <Td align="right" mono>{formatINR(pf(r.site_id).billed)}</Td>
+                    <Td align="right" mono>{formatINR(pf(r.site_id).received)}</Td>
                     <Td align="right" mono><span style={{ color: r.normal_outstanding > 0 ? C.waiting : undefined }}>{formatINR(r.normal_outstanding)}</span></Td>
                     <Td align="right" mono><span style={{ color: r.retention_outstanding > 0 ? C.held : undefined }}>{formatINR(r.retention_outstanding)}</span></Td>
                     <Td><ProgressPair billing={r.billing_progress_pct} physical={r.physical_progress_pct} physicalDate={r.physical_progress_date} /></Td>
@@ -146,9 +172,10 @@ function MoneyBar({ total, segments, big }: { total: number; segments: { label: 
   );
 }
 
-function SiteCard({ r, delay }: { r: SiteDashboardRow; delay: number }) {
-  const inv = Number(r.total_invoiced), col = Number(r.total_collected), out = Number(r.normal_outstanding), held = Number(r.retention_outstanding);
-  const tax = Math.max(0, inv - col - out - held);
+// The bar shows the period's billing; "Waiting" and "Held back" are today's
+// totals, so a site that only has brought-forward money owed still says so.
+function SiteCard({ r, p, bf, delay }: { r: SiteDashboardRow; p: PeriodFigures; bf: number; delay: number }) {
+  const inv = p.billed, out = Number(r.normal_outstanding), held = Number(r.retention_outstanding);
   const hasBilling = inv > 0;
   const status =
     out > 0.5 ? { t: 'Client owes money', c: C.waiting }
@@ -171,19 +198,22 @@ function SiteCard({ r, delay }: { r: SiteDashboardRow; delay: number }) {
 
       <div className="mt-4">
         {hasBilling ? (
-          <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div style={{ width: `${(col / inv) * 100}%`, backgroundColor: C.received }} />
-            <div style={{ width: `${(tax / inv) * 100}%`, backgroundColor: C.tax }} />
-            <div style={{ width: `${(held / inv) * 100}%`, backgroundColor: C.held }} />
-            <div style={{ width: `${(out / inv) * 100}%`, backgroundColor: C.waiting }} />
+          <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100" title={`Billed since ${REPORTING_START_LABEL}`}>
+            <div style={{ width: `${(p.paidOn / inv) * 100}%`, backgroundColor: C.received }} />
+            <div style={{ width: `${(p.tax / inv) * 100}%`, backgroundColor: C.tax }} />
+            <div style={{ width: `${(p.held / inv) * 100}%`, backgroundColor: C.held }} />
+            <div style={{ width: `${(p.waiting / inv) * 100}%`, backgroundColor: C.waiting }} />
           </div>
         ) : (
           <div className="h-2.5 w-full rounded-full bg-slate-100" />
         )}
       </div>
 
+      {Math.abs(bf) > 0.5 && (
+        <div className="mt-3 font-sans text-xs text-slate-500">Brought forward: <span className="font-mono font-semibold text-slate-700">{formatCompact(bf)}</span></div>
+      )}
       <div className="mt-4 grid grid-cols-3 gap-3">
-        <Mini label="Received" v={col} c={C.received} />
+        <Mini label="Received" v={p.received} c={C.received} />
         <Mini label="Waiting" v={out} c={C.waiting} />
         <Mini label="Held back" v={held} c={C.held} />
       </div>

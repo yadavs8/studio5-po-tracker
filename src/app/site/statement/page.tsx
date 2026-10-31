@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { formatINR, formatDate } from '@/lib/format';
 import { ErrorBanner, EmptyState } from '@/lib/ui';
 import { documentUrl } from '@/lib/documents';
+import { inPeriod, loadBroughtForward, REPORTING_START, REPORTING_START_LABEL, type BroughtForward } from '@/lib/period';
 
 interface Po { po_id: string; po_number: string; po_date: string; scope_description: string | null; po_value: number; invoiced: number; received_bank: number; tds_and_other_deductions: number; retention_pending: number; balance_against_po: number; }
 interface Inv { invoice_id: string; po_id: string | null; sub_project_id: string | null; invoice_number: string; invoice_date: string; taxable_value: number; gst_amount: number | null; gross_invoice_value: number; }
@@ -33,14 +34,17 @@ function StatementPageInner() {
   const id = useSearchParams().get('id') ?? '';
   const [siteName, setSiteName] = useState('');
   const [client, setClient] = useState('');
-  const [pos, setPos] = useState<Po[]>([]);
-  const [invs, setInvs] = useState<Inv[]>([]);
+  // All records are loaded (for lookups such as PO numbers); only those dated
+  // on or after REPORTING_START are listed. Earlier ones are the bf line.
+  const [allPos, setAllPos] = useState<Po[]>([]);
+  const [allInvs, setAllInvs] = useState<Inv[]>([]);
+  const [bf, setBf] = useState<BroughtForward | null>(null);
   const [settle, setSettle] = useState<Record<string, Settle>>({});
-  const [pays, setPays] = useState<Pay[]>([]);
+  const [allPays, setAllPays] = useState<Pay[]>([]);
   const [allocByPay, setAllocByPay] = useState<Record<string, number>>({});
   const [subs, setSubs] = useState<Sub[]>([]);
   const [deds, setDeds] = useState<Ded[]>([]);
-  const [pis, setPis] = useState<Pi[]>([]);
+  const [allPis, setAllPis] = useState<Pi[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -59,18 +63,19 @@ function StatementPageInner() {
       if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
       const s = q[0].data as unknown as { site_name: string; client: { display_name: string } | null };
       setSiteName(s.site_name); setClient(s.client?.display_name ?? '');
-      setPos((q[1].data ?? []) as Po[]);
+      setAllPos((q[1].data ?? []) as Po[]);
       const invRows = (q[2].data ?? []) as Inv[];
-      setInvs(invRows);
+      setAllInvs(invRows);
+      try { setBf((await loadBroughtForward(id))[id] ?? null); } catch (e) { setError((e as Error).message); }
       if (invRows.length) {
         const { data: d } = await supabase.from('deduction').select('invoice_id,deduction_type,amount,status').in('invoice_id', invRows.map((i) => i.invoice_id));
         setDeds((d ?? []) as Ded[]);
       }
       setSettle(Object.fromEntries(((q[3].data ?? []) as Settle[]).map((r) => [r.invoice_id, r])));
       const payRows = (q[4].data ?? []) as Pay[];
-      setPays(payRows);
+      setAllPays(payRows);
       setSubs((q[5].data ?? []) as Sub[]);
-      setPis((q[6].data ?? []) as Pi[]);
+      setAllPis((q[6].data ?? []) as Pi[]);
       if (payRows.length) {
         const { data: a } = await supabase.from('payment_allocation').select('payment_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
         const m: Record<string, number> = {};
@@ -81,10 +86,18 @@ function StatementPageInner() {
     })();
   }, [id]);
 
-  const poNo = (poId: string | null) => pos.find((p) => p.po_id === poId)?.po_number ?? '—';
+  const poNo = (poId: string | null) => allPos.find((p) => p.po_id === poId)?.po_number ?? '—';
+  const pos = allPos.filter((p) => inPeriod(p.po_date));
+  const invs = allInvs.filter((i) => inPeriod(i.invoice_date));
+  const pays = allPays.filter((p) => inPeriod(p.payment_date));
+  const pis = allPis.filter((p) => inPeriod(p.pi_date));
+  const hidden = (allPos.length - pos.length) + (allInvs.length - invs.length) + (allPays.length - pays.length) + (allPis.length - pis.length);
 
   // ---- Table 1: PO-wise account statement -----------------------------------
-  const noPoInvs = invs.filter((i) => !i.po_id);
+  // Invoices from the period whose PO is not listed (no PO, or a PO dated
+  // before the cut-off) are summed in one row, like invoices without a PO.
+  const visiblePo = new Set(pos.map((p) => p.po_id));
+  const noPoInvs = invs.filter((i) => !i.po_id || !visiblePo.has(i.po_id));
   const isHold = (d: Ded) => d.deduction_type === 'retention' || d.deduction_type === 'handover_hold';
   const noPoIds = new Set(noPoInvs.map((i) => i.invoice_id));
   const noPoDeds = deds.filter((d) => noPoIds.has(d.invoice_id));
@@ -95,20 +108,23 @@ function StatementPageInner() {
     held: sum(noPoDeds.filter((d) => isHold(d) && d.status === 'pending'), (d) => n(d.amount)),
     left: sum(noPoInvs, (i) => n(settle[i.invoice_id]?.remaining_balance ?? i.gross_invoice_value)),
   };
+  const b = bf ?? { billed: 0, received: 0, tax: 0, held: 0, receivedSince: 0, balance: 0 };
+  const hasBf = Math.abs(b.billed) + Math.abs(b.received) + Math.abs(b.tax) > 0.5;
   const totals = {
     po: sum(pos, (p) => n(p.po_value)),
-    billed: sum(pos, (p) => n(p.invoiced)) + noPo.billed,
-    received: sum(pos, (p) => n(p.received_bank)) + noPo.paid,
-    tds: sum(pos, (p) => n(p.tds_and_other_deductions)) + noPo.tds,
-    held: sum(pos, (p) => n(p.retention_pending)) + noPo.held,
-    balance: sum(pos, (p) => n(p.balance_against_po)) + noPo.left,
+    billed: sum(pos, (p) => n(p.invoiced)) + noPo.billed + b.billed,
+    received: sum(pos, (p) => n(p.received_bank)) + noPo.paid + b.received + b.receivedSince,
+    tds: sum(pos, (p) => n(p.tds_and_other_deductions)) + noPo.tds + b.tax,
+    held: sum(pos, (p) => n(p.retention_pending)) + noPo.held + b.held,
+    balance: sum(pos, (p) => n(p.balance_against_po)) + noPo.left + b.balance,
   };
+  const bfLabel = `Brought forward — everything before ${REPORTING_START_LABEL}`;
 
   // ---- Table 2: proforma invoices -------------------------------------------
   // A PI asks for payment but is not a bill: per the five-tier model only tax
   // invoices count as billed, so PIs are listed here and kept out of every
   // balance above.
-  const invNo = (invoiceId: string | null) => invs.find((i) => i.invoice_id === invoiceId)?.invoice_number;
+  const invNo = (invoiceId: string | null) => allInvs.find((i) => i.invoice_id === invoiceId)?.invoice_number;
   const piStatus = (p: Pi) =>
     p.status === 'converted_to_invoice' && invNo(p.converted_invoice_id)
       ? `Tax invoice ${invNo(p.converted_invoice_id)} raised`
@@ -146,12 +162,13 @@ function StatementPageInner() {
 
   function exportExcel() {
     const asOn = new Date().toLocaleDateString('en-IN');
-    const head = ['STUDIO5 INTERIORS PVT LTD', `${client} - ${siteName}`, `Account statement as on ${asOn}`, ''];
+    const head = ['STUDIO5 INTERIORS PVT LTD', `${client} - ${siteName}`, `Account statement as on ${asOn} (from ${REPORTING_START_LABEL})`, ''];
     const s1: (string | number)[][] = [
       ...head.map((h) => [h]),
       ['S.N.', 'Particulars', 'PO No.', 'Dated', 'PO amount (with GST)', 'Billed so far', 'Payment received', 'Tax deducted by client', 'Held back until handover', 'Balance still to receive'],
+      ...(hasBf ? [['', bfLabel, '', `before ${formatDate(REPORTING_START)}`, '', b.billed, b.received + b.receivedSince, b.tax, b.held, b.balance]] : []),
       ...pos.map((p, i) => [i + 1, p.scope_description ?? '', p.po_number, formatDate(p.po_date), n(p.po_value), n(p.invoiced), n(p.received_bank), n(p.tds_and_other_deductions), n(p.retention_pending), n(p.balance_against_po)]),
-      ...(noPoInvs.length ? [['', 'Invoices not linked to a PO', '', '', '', noPo.billed, noPo.paid, noPo.tds, noPo.held, noPo.left]] : []),
+      ...(noPoInvs.length ? [['', 'Invoices not linked to a PO listed here', '', '', '', noPo.billed, noPo.paid, noPo.tds, noPo.held, noPo.left]] : []),
       ['', 'TOTAL', '', '', totals.po, totals.billed, totals.received, totals.tds, totals.held, totals.balance],
     ];
     const sPi: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Proforma invoices (not counted in the balances)'], [],
@@ -200,8 +217,13 @@ function StatementPageInner() {
             <div className="font-serif text-xl font-semibold">ACCOUNT STATEMENT</div>
             <div className="mt-1 text-sm font-semibold">STUDIO5 INTERIORS PVT LTD</div>
             <div className="text-sm">{client.toUpperCase()} — {siteName.toUpperCase()}</div>
-            <div className="mt-1 font-mono text-xs text-[#1C1C1A]/60">As on {asOn}</div>
+            <div className="mt-1 font-mono text-xs text-[#1C1C1A]/60">As on {asOn} · covers {REPORTING_START_LABEL} onwards</div>
           </div>
+          {hidden > 0 && (
+            <p className="mt-3 text-center text-[11px] text-[#1C1C1A]/60">
+              {hidden} record{hidden === 1 ? '' : 's'} dated before {REPORTING_START_LABEL} {hidden === 1 ? 'is' : 'are'} not listed; what they leave owing is the brought-forward line.
+            </p>
+          )}
 
           <H>1. Purchase orders — what was agreed, received and what is left</H>
           <table className="w-full border-collapse text-sm">
@@ -210,6 +232,12 @@ function StatementPageInner() {
                 <th key={h} className={`border border-[#1F3A52] px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
             </tr></thead>
             <tbody>
+              {hasBf && (
+                <tr className="bg-[#1F3A52]/5">
+                  <C> </C><C bold>{bfLabel}</C><C> </C><C mono>before {formatDate(REPORTING_START)}</C><C r> </C>
+                  <C r>{formatINR(b.billed)}</C><C r>{formatINR(b.received + b.receivedSince)}</C><C r>{formatINR(b.tax)}</C><C r>{formatINR(b.held)}</C><C r bold>{formatINR(b.balance)}</C>
+                </tr>
+              )}
               {pos.map((p, i) => (
                 <tr key={p.po_id}>
                   <C>{i + 1}</C><C>{p.scope_description ?? ''}</C><C>{p.po_number}</C><C mono>{formatDate(p.po_date)}</C>
@@ -219,7 +247,7 @@ function StatementPageInner() {
               ))}
               {noPoInvs.length > 0 && (
                 <tr className="bg-[#B8860B]/5">
-                  <C> </C><C>Invoices not linked to a PO ({noPoInvs.length})</C><C> </C><C> </C><C r> </C>
+                  <C> </C><C>Invoices not linked to a PO listed here ({noPoInvs.length})</C><C> </C><C> </C><C r> </C>
                   <C r>{formatINR(noPo.billed)}</C><C r>{formatINR(noPo.paid)}</C><C r>{formatINR(noPo.tds)}</C><C r>{formatINR(noPo.held)}</C><C r bold>{formatINR(noPo.left)}</C>
                 </tr>
               )}

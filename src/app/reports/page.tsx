@@ -45,18 +45,17 @@ export default function ReportsPage() {
 
   // ---- 1. All sites at a glance -----------------------------------------------------------
   const allSites = () => run('sites', async () => {
-    const [view, period, bfs] = await Promise.all([supabase.from('v_site_dashboard').select('*').order('client_name'), loadPeriodFigures(), loadBroughtForward()]);
+    const [view, period] = await Promise.all([supabase.from('v_site_dashboard').select('*').order('client_name'), loadPeriodFigures()]);
     const d = must(view) as Record<string, unknown>[];
     const rows: Cell[][] = d.map((r, i) => {
-      const id = String(r.site_id), p = period[id], b = bfs[id];
-      return [i + 1, String(r.client_name), String(r.site_name), b?.balance ?? 0, p?.poValue ?? 0, p?.billed ?? 0, p?.received ?? 0,
+      const p = period[String(r.site_id)];
+      return [i + 1, String(r.client_name), String(r.site_name), p?.poValue ?? 0, p?.billed ?? 0, p?.received ?? 0,
         num(r.normal_outstanding), num(r.retention_outstanding), num(r.advance_balance),
         r.billing_progress_pct === null ? '' : num(r.billing_progress_pct), r.physical_progress_pct === null ? '' : num(r.physical_progress_pct)];
     });
-    rows.push(['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), sum(rows, 9), '', '']);
-    const since = `since ${REPORTING_START_LABEL}`;
-    downloadWorkbook('Studio5 - All sites summary', [{ name: 'All sites', widths: [6, 28, 38, 22, 18, 18, 18, 20, 20, 18, 14, 14],
-      rows: [...HEAD('All sites at a glance'), ['S.N.', 'Client', 'Site', BF, `PO value ${since}`, `Billed ${since}`, `Money received ${since}`, 'Waiting for payment today', 'Held back until handover', 'Advance not yet used', 'Billed % of PO', 'Work done %'], ...rows] }]);
+    rows.push(['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), '', '']);
+    downloadWorkbook('Studio5 - All sites summary', [{ name: 'All sites', widths: [6, 28, 38, 18, 18, 18, 20, 20, 18, 14, 14],
+      rows: [...HEAD('All sites at a glance'), ['S.N.', 'Client', 'Site', 'PO value (with GST)', 'Billed so far', 'Money received', 'Billed, waiting for payment', 'Held back until handover', 'Advance not yet used', 'Billed % of PO', 'Work done %'], ...rows] }]);
   });
 
   // ---- 2. PO-wise statement, all sites -----------------------------------------------------

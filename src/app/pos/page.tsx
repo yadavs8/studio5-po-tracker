@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatINR, formatDate } from '@/lib/format';
 import { PageHeader, ErrorBanner, EmptyState, DataTable, Td, StatusBadge, FileBadge, buttonClass } from '@/lib/ui';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, UploadCloud } from 'lucide-react';
 
 interface PoItem {
   po_id: string;
@@ -46,26 +46,30 @@ function PosPageInner() {
     async function load() {
       setLoading(true);
       setError(null);
-      const [poRes, siteRes] = await Promise.all([
-        supabase
-          .from('purchase_order')
-          .select('po_id, po_number, po_date, scope_description, total_value_with_gst, status, document_id, site:site_id(site_id, site_name, client:client_id(display_name)), document:document_id(file_url)')
-          .order('po_date', { ascending: false }),
-        supabase
-          .from('site')
-          .select('site_id, site_name')
-          .order('site_name'),
-      ]);
+      const { data, error: poErr } = await supabase
+        .from('purchase_order')
+        .select('po_id, po_number, po_date, scope_description, total_value_with_gst, status, document_id, site:site_id(site_id, site_name, client:client_id(display_name)), document:document_id(file_url)')
+        .order('po_date', { ascending: false });
 
-      if (poRes.error) {
-        setError(poRes.error.message);
+      if (poErr) {
+        setError(poErr.message);
       } else {
-        setPos((poRes.data ?? []) as unknown as PoItem[]);
+        const items = (data ?? []) as unknown as PoItem[];
+        setPos(items);
+
+        // Filter: ONLY show sites that actually have POs recorded
+        const siteMap = new Map<string, string>();
+        items.forEach((p) => {
+          if (p.site?.site_id && p.site?.site_name) {
+            siteMap.set(p.site.site_id, p.site.site_name);
+          }
+        });
+        const activeSites = Array.from(siteMap.entries())
+          .map(([site_id, site_name]) => ({ site_id, site_name }))
+          .sort((a, b) => a.site_name.localeCompare(b.site_name));
+        setSites(activeSites);
       }
 
-      if (!siteRes.error && siteRes.data) {
-        setSites(siteRes.data as SiteOption[]);
-      }
       setLoading(false);
     }
     load();
@@ -90,9 +94,17 @@ function PosPageInner() {
         title="POs & WOs"
         subtitle="Browse and search all purchase orders and work orders across sites."
         actions={
-          <Link href="/po-pi" className={buttonClass}>
-            <Plus size={15} /> Add PO / PI
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/upload"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"
+            >
+              <UploadCloud size={15} /> Upload PO / WO
+            </Link>
+            <Link href="/po-pi" className={buttonClass}>
+              <Plus size={15} /> Add manual
+            </Link>
+          </div>
         }
       />
       {error && <ErrorBanner message={error} />}
@@ -103,13 +115,13 @@ function PosPageInner() {
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-slate-600">Search</label>
             <div className="relative mt-1.5">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search PO/WO no., site, client, scope…"
-                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                placeholder="Search PO no., site, client, scope…"
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
               />
             </div>
           </div>
@@ -118,9 +130,9 @@ function PosPageInner() {
             <select
               value={siteFilter}
               onChange={(e) => setSiteFilter(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
             >
-              <option value="">All sites</option>
+              <option value="">All active sites ({sites.length})</option>
               {sites.map((s) => (
                 <option key={s.site_id} value={s.site_id}>
                   {s.site_name}
@@ -139,14 +151,14 @@ function PosPageInner() {
               <div className="skeleton h-8" />
             </div>
           ) : filtered.length === 0 ? (
-            <EmptyState text={search || siteFilter ? 'No orders match your search.' : 'No orders found.'} />
+            <EmptyState text={search || siteFilter ? 'No purchase orders match your search.' : 'No purchase orders found.'} />
           ) : (
             <DataTable
               columns={[
-                { label: 'PO/WO no.' },
+                { label: 'PO / WO no.' },
                 { label: 'Date' },
                 { label: 'Client — Site' },
-                { label: 'Scope' },
+                { label: 'Scope of work' },
                 { label: 'Value (with GST)', align: 'right' },
                 { label: 'Status' },
                 { label: 'File' },
@@ -186,7 +198,7 @@ function PosPageInner() {
 
 export default function PosPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<div className="p-10 text-center text-sm text-slate-400">Loading purchase orders…</div>}>
       <PosPageInner />
     </Suspense>
   );

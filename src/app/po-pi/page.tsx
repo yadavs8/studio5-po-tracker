@@ -180,10 +180,11 @@ export default function PoPiPage() {
               {pis.length === 0 ? (
                 <EmptyState text="No PIs recorded yet." />
               ) : (
-                <DataTable columns={[{ label: 'PI No.' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }]}>
+                <DataTable columns={[{ label: 'PI No.' }, { label: 'Subject' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }]}>
                   {pis.map((pi) => (
                     <tr key={pi.pi_id}>
                       <Td>{pi.pi_number}</Td>
+                      <Td>{pi.subject ?? ''}</Td>
                       <Td>{formatDate(pi.pi_date)}</Td>
                       <Td align="right" mono>{formatINR(pi.amount)}</Td>
                       <Td><StatusBadge status={pi.status} /></Td>
@@ -267,6 +268,7 @@ function NewPiForm({
   const [piDate, setPiDate] = useState('');
   const [amount, setAmount] = useState('');
   const [poId, setPoId] = useState('');
+  const [subject, setSubject] = useState('');
   const [remarks, setRemarks] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -286,6 +288,7 @@ function NewPiForm({
       pi_number: piNumber.trim(),
       pi_date: piDate,
       amount: Number(amount),
+      subject: subject.trim() || null,
       remarks: remarks.trim() || null,
       status: 'draft',
     });
@@ -300,7 +303,8 @@ function NewPiForm({
       <FieldInput label="PI Date" type="date" value={piDate} onChange={setPiDate} />
       <FieldInput label="Amount" type="number" value={amount} onChange={setAmount} />
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
-      <FieldInput label="Remarks" value={remarks} onChange={setRemarks} placeholder="e.g. Tower B Installation of Kitchen" full />
+      <FieldInput label="Subject" value={subject} onChange={setSubject} placeholder="e.g. Tower B Installation of Kitchen" full />
+      <FieldInput label="Work status / remarks" value={remarks} onChange={setRemarks} placeholder="e.g. 85% Work Done, rest on hold" full />
       <FieldFile onChange={setFile} />
     </FormShell>
   );

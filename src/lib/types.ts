@@ -72,6 +72,7 @@ export interface ProformaInvoice {
   pi_date: string;
   amount: number;
   submitted_date: string | null;
+  subject: string | null;
   remarks: string | null;
   status: PiStatus;
   converted_invoice_id: string | null;

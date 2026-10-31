@@ -19,7 +19,7 @@ interface PoRow {
   invoiced: number; received_bank: number; tds_and_other_deductions: number; retention_pending: number;
   yet_to_invoice: number; invoice_outstanding: number; balance_against_po: number;
 }
-interface PiRow { pi_id: string; po_id: string | null; pi_number: string; pi_date: string; amount: number; status: string; remarks: string | null; document_id: string | null; }
+interface PiRow { pi_id: string; po_id: string | null; pi_number: string; pi_date: string; amount: number; status: string; subject: string | null; remarks: string | null; document_id: string | null; }
 interface InvRow { invoice_id: string; po_id: string | null; invoice_number: string; invoice_date: string; gross_invoice_value: number; document_id: string | null; sub_project_id: string | null; }
 interface SettleRow { invoice_id: string; total_payments_allocated: number; total_deducted: number; remaining_balance: number; computed_status: string; }
 interface PayRow { payment_id: string; po_id: string | null; payment_date: string; amount_received: number; payment_type: string; payment_mode: string; utr_or_reference: string | null; remarks: string | null; document_id: string | null; }
@@ -223,10 +223,10 @@ function Detail({ pis, invs, settle, receipts, onEdit }: {
     <div className="divide-y divide-[#1C1C1A]/10">
       <Section title={`Proforma invoices - quotes sent for approval (${pis.length})`}>
         {pis.length === 0 ? <Empty t="No PI recorded." /> : (
-          <DataTable columns={[{ label: 'PI no.' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }, { label: 'Note' }, { label: 'Doc' }, { label: '' }]}>
+          <DataTable columns={[{ label: 'PI no.' }, { label: 'Subject' }, { label: 'Date' }, { label: 'Amount', align: 'right' }, { label: 'Status' }, { label: 'Work status / note' }, { label: 'Doc' }, { label: '' }]}>
             {pis.map((p) => (
               <tr key={p.pi_id}>
-                <Td>{p.pi_number}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
+                <Td>{p.pi_number}</Td><Td>{p.subject ?? ''}</Td><Td mono>{formatDate(p.pi_date)}</Td><Td align="right" mono>{formatINR(p.amount)}</Td>
                 <Td><StatusBadge status={p.status} /></Td><Td>{p.remarks ?? ''}</Td><Td><DocLink id={p.document_id} /></Td>
                 <Td>{onEdit && <EditButton onClick={() => onEdit('pi', p.pi_id)} />}</Td>
               </tr>
@@ -480,7 +480,8 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                   { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
                   { value: 'approved', label: 'Approved' }, { value: 'converted_to_invoice', label: 'Converted to Invoice' },
                 ]} />
-                <FieldInput label="Remarks" value={form.remarks ?? ''} onChange={set('remarks')} full />
+                <FieldInput label="Subject" value={form.subject ?? ''} onChange={set('subject')} full />
+                <FieldInput label="Work status / remarks" value={form.remarks ?? ''} onChange={set('remarks')} full />
               </>
             )}
             {kind === 'invoice' && (

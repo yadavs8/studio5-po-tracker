@@ -34,11 +34,13 @@ const n = (v: unknown) => Number(v ?? 0);
  * later payment matched to one of those older invoices.
  */
 export async function loadBroughtForward(siteId?: string): Promise<Record<string, BroughtForward>> {
-  const bySite = <T extends { eq: (c: string, v: string) => T }>(q: T) => (siteId ? q.eq('site_id', siteId) : q);
+  const invQ = supabase.from('tax_invoice').select('invoice_id,site_id,invoice_date,gross_invoice_value');
+  const payQ = supabase.from('payment').select('payment_id,site_id,po_id,payment_date,amount_received');
+  const poQ = supabase.from('purchase_order').select('po_id,po_date');
   const [inv, pay, po, ded, alloc] = await Promise.all([
-    bySite(supabase.from('tax_invoice').select('invoice_id,site_id,invoice_date,gross_invoice_value')),
-    bySite(supabase.from('payment').select('payment_id,site_id,po_id,payment_date,amount_received')),
-    bySite(supabase.from('purchase_order').select('po_id,po_date')),
+    siteId ? invQ.eq('site_id', siteId) : invQ,
+    siteId ? payQ.eq('site_id', siteId) : payQ,
+    siteId ? poQ.eq('site_id', siteId) : poQ,
     supabase.from('deduction').select('invoice_id,deduction_type,status,amount'),
     supabase.from('payment_allocation').select('payment_id,invoice_id,amount_allocated'),
   ]);

@@ -25,8 +25,21 @@ import {
   ArrowRight,
   ExternalLink,
   RefreshCw,
-  Plus,
+  Link2,
 } from 'lucide-react';
+
+interface SitePoOpt {
+  po_id: string;
+  po_number: string;
+}
+
+interface SitePiOpt {
+  pi_id: string;
+  pi_number: string;
+  amount: number;
+  subject: string | null;
+  po_id: string | null;
+}
 
 function UploadPageInner() {
   const router = useRouter();
@@ -49,6 +62,12 @@ function UploadPageInner() {
   const [subjectOrScope, setSubjectOrScope] = useState('');
   const [isOverride, setIsOverride] = useState(true);
 
+  // Cross-linking: PO to PIs and PI to PO/WO
+  const [sitePos, setSitePos] = useState<SitePoOpt[]>([]);
+  const [sitePis, setSitePis] = useState<SitePiOpt[]>([]);
+  const [linkedPoId, setLinkedPoId] = useState('');
+  const [selectedPiIds, setSelectedPiIds] = useState<string[]>([]);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<{
@@ -57,6 +76,7 @@ function UploadPageInner() {
     detailsUrl: string;
     siteName: string;
     isUpdate: boolean;
+    linkedCount?: number;
   } | null>(null);
 
   // Load clients and sites, plus determine active sites
@@ -91,6 +111,28 @@ function UploadPageInner() {
     }
     loadData();
   }, []);
+
+  // When selectedSiteId changes, load existing POs and PIs for cross-linking
+  useEffect(() => {
+    if (!selectedSiteId) {
+      setSitePos([]);
+      setSitePis([]);
+      setLinkedPoId('');
+      setSelectedPiIds([]);
+      return;
+    }
+
+    Promise.all([
+      supabase.from('purchase_order').select('po_id, po_number').eq('site_id', selectedSiteId).order('po_date', { ascending: false }),
+      supabase.from('proforma_invoice').select('pi_id, pi_number, amount, subject, po_id').eq('site_id', selectedSiteId).order('pi_date', { ascending: false }),
+    ]).then(([poRes, piRes]) => {
+      setSitePos((poRes.data ?? []) as SitePoOpt[]);
+      const pis = (piRes.data ?? []) as SitePiOpt[];
+      setSitePis(pis);
+      // Pre-select unlinked PIs when uploading a new Work Order
+      setSelectedPiIds(pis.filter((p) => !p.po_id).map((p) => p.pi_id));
+    });
+  }, [selectedSiteId]);
 
   // When a file is selected, run smart auto-detection
   async function handleFileSelect(selectedFile: File | null) {
@@ -152,6 +194,7 @@ function UploadPageInner() {
       let newDocId: string;
       let detailsUrl = '';
       let isUpdate = false;
+      let linkedCount = 0;
 
       if (docType === 'pi') {
         // PROFORMA INVOICE
@@ -165,6 +208,7 @@ function UploadPageInner() {
               amount: parsedAmount || detected.existingRecord.amount,
               pi_date: docDate || detected.existingRecord.date,
               subject: subjectOrScope || null,
+              po_id: linkedPoId || null,
             })
             .eq('pi_id', detected.existingRecord.id);
           if (updErr) throw new Error(updErr.message);
@@ -177,6 +221,7 @@ function UploadPageInner() {
             .from('proforma_invoice')
             .insert({
               site_id: selectedSiteId,
+              po_id: linkedPoId || null,
               pi_number: docNumber.trim(),
               pi_date: docDate,
               amount: parsedAmount,
@@ -191,8 +236,9 @@ function UploadPageInner() {
         }
       } else if (docType === 'po') {
         // PURCHASE ORDER / WORK ORDER
+        let targetPoId: string;
         if (detected?.existingRecord && isOverride) {
-          // Replace existing PO
+          // Replace existing PO / WO
           newDocId = await replaceDocument(detected.existingRecord.document_id, file, 'po');
           const { error: updErr } = await supabase
             .from('purchase_order')
@@ -204,10 +250,11 @@ function UploadPageInner() {
             })
             .eq('po_id', detected.existingRecord.id);
           if (updErr) throw new Error(updErr.message);
+          targetPoId = detected.existingRecord.id;
           detailsUrl = `/po/?id=${detected.existingRecord.id}`;
           isUpdate = true;
         } else {
-          // Create new PO
+          // Create new PO / WO
           newDocId = (await uploadDocument(file, 'po'))!;
           const { data: newPo, error: insErr } = await supabase
             .from('purchase_order')
@@ -223,7 +270,19 @@ function UploadPageInner() {
             .select('po_id')
             .single();
           if (insErr) throw new Error(insErr.message);
+          targetPoId = newPo.po_id;
           detailsUrl = `/po/?id=${newPo.po_id}`;
+        }
+
+        // Link selected Proforma Invoices (PIs) to this Work Order
+        if (targetPoId && selectedPiIds.length > 0) {
+          const { error: linkErr } = await supabase
+            .from('proforma_invoice')
+            .update({ po_id: targetPoId })
+            .in('pi_id', selectedPiIds);
+          if (!linkErr) {
+            linkedCount = selectedPiIds.length;
+          }
         }
       } else if (docType === 'invoice') {
         // TAX INVOICE
@@ -268,6 +327,7 @@ function UploadPageInner() {
         detailsUrl,
         siteName: siteMeta ? `${siteMeta.client_name} — ${siteMeta.site_name}` : 'Site',
         isUpdate,
+        linkedCount,
       });
 
       // Clear file
@@ -288,6 +348,14 @@ function UploadPageInner() {
     setDocDate('');
     setAmount('');
     setSubjectOrScope('');
+    setLinkedPoId('');
+    setSelectedPiIds([]);
+  }
+
+  function togglePiSelection(piId: string) {
+    setSelectedPiIds((prev) =>
+      prev.includes(piId) ? prev.filter((id) => id !== piId) : [...prev, piId]
+    );
   }
 
   return (
@@ -316,6 +384,11 @@ function UploadPageInner() {
                   <span className="font-semibold text-slate-900">{successInfo.title}</span> has been saved and linked to{' '}
                   <span className="font-semibold text-slate-900">{successInfo.siteName}</span>.
                 </p>
+                {successInfo.linkedCount && successInfo.linkedCount > 0 ? (
+                  <p className="mt-1 text-xs font-semibold text-emerald-800">
+                    🔗 {successInfo.linkedCount} Proforma Invoice{successInfo.linkedCount > 1 ? 's' : ''} linked to this Work Order!
+                  </p>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-2.5">
                   <Link
                     href={`/document/?id=${successInfo.documentId}&title=${encodeURIComponent(successInfo.title)}`}
@@ -492,14 +565,67 @@ function UploadPageInner() {
                   onChange={setSubjectOrScope}
                   placeholder="e.g. Tile Work on Lily Pond"
                 />
+
+                {/* If PI: allow linking to existing Work Order */}
+                {docType === 'pi' && sitePos.length > 0 && (
+                  <div className="sm:col-span-2">
+                    <FieldSelect
+                      label="Link to Work Order / PO (optional)"
+                      value={linkedPoId}
+                      onChange={setLinkedPoId}
+                      options={sitePos.map((p) => ({ value: p.po_id, label: `PO/WO ${p.po_number}` }))}
+                    />
+                  </div>
+                )}
               </div>
+
+              {/* If PO/WO: allow linking to existing PIs on that site */}
+              {docType === 'po' && sitePis.length > 0 && (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                    <Link2 size={15} className="text-indigo-600" />
+                    <span>Link Proforma Invoices (PIs) to this Work Order</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Select any PIs on this site covered by this Work Order to update their status and link them automatically:
+                  </p>
+                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                    {sitePis.map((p) => (
+                      <label
+                        key={p.pi_id}
+                        className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs cursor-pointer transition-colors ${
+                          selectedPiIds.includes(p.pi_id)
+                            ? 'border-indigo-300 bg-white font-medium text-indigo-950 shadow-2xs'
+                            : 'border-slate-200 bg-white/70 text-slate-700 hover:bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedPiIds.includes(p.pi_id)}
+                            onChange={() => togglePiSelection(p.pi_id)}
+                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span className="font-mono font-semibold">{p.pi_number}</span>
+                          {p.subject && <span className="text-slate-500 truncate max-w-xs">· {p.subject}</span>}
+                        </div>
+                        <span className="font-mono font-bold text-slate-900">{formatINR(p.amount)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
                 <GhostButton onClick={handleReset} disabled={submitting}>
                   Cancel
                 </GhostButton>
                 <PrimaryButton onClick={handleSubmit} disabled={submitting}>
-                  {submitting ? 'Routing Document…' : isOverride && detected?.existingRecord ? 'Confirm & Override' : 'Confirm & Save Document'}
+                  {submitting
+                    ? 'Routing Document…'
+                    : isOverride && detected?.existingRecord
+                    ? 'Confirm & Override'
+                    : 'Confirm & Save Document'}
                 </PrimaryButton>
               </div>
             </div>

@@ -45,5 +45,15 @@ supabase/load_data.sql
 supabase/build_load.py
 scratch_*
 
+# local one-off scripts with a hardcoded Supabase service_role key - never commit these
+scripts/apply_fixes.js
+scripts/calibrate_melia.js
+scripts/check_health.js
+scripts/inspect_db.js
+scripts/inspect_details.js
+scripts/link_everything.js
+scripts/print_dashboard.js
+scripts/query_pos.js
+
 # Tally agent
 tally-agent/node_modules

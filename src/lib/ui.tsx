@@ -197,7 +197,7 @@ export function StatTile({
 // Buttons
 // ---------------------------------------------------------------------------
 
-const BTN = 'inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]';
+const BTN = 'inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 min-h-[40px] sm:min-h-[38px] touch-manipulation text-sm font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]';
 
 export function PrimaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (

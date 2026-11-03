@@ -21,7 +21,27 @@ body {
   font-feature-settings: 'cv11', 'ss01';
 }
 
-.tabular-nums { font-variant-numeric: tabular-nums; }
+/* Financial Digits Alignment & Tabular Numbers (ui-ux-pro-max standard) */
+.tabular-nums,
+table td,
+table th,
+[data-amount],
+.stat-amount {
+  font-variant-numeric: tabular-nums lining-nums;
+  -webkit-font-feature-settings: 'tnum' 1, 'lnum' 1;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+/* Touch Ergonomics & Safe-area Insets (impeccable standard) */
+button, input, select, textarea {
+  touch-action: manipulation;
+}
+
+@supports (padding: max(0px)) {
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+}
 
 input, select, textarea, button { font-family: inherit; }
 button { cursor: pointer; }

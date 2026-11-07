@@ -1,12 +1,12 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatINR } from '@/lib/format';
 import { uploadDocument, replaceDocument, UploadDocType } from '@/lib/documents';
-import { detectDocument, SiteMeta, DetectedDocument } from '@/lib/detector';
+import { detectDocument, fromExtracted, SiteMeta, DetectedDocument } from '@/lib/detector';
+import { readDocument, readableType, closeInboxItem } from '@/lib/extractApi';
 import {
   PageHeader,
   ErrorBanner,
@@ -26,7 +26,11 @@ import {
   ExternalLink,
   RefreshCw,
   Link2,
+  Loader2,
 } from 'lucide-react';
+
+type AiState = 'idle' | 'reading' | 'done' | 'failed' | 'skipped';
+type FieldKey = 'docType' | 'site' | 'docNumber' | 'docDate' | 'amount' | 'subject' | 'override' | 'linkedPo';
 
 interface SitePoOpt {
   po_id: string;
@@ -42,8 +46,6 @@ interface SitePiOpt {
 }
 
 function UploadPageInner() {
-  const router = useRouter();
-
   const [sites, setSites] = useState<SiteMeta[]>([]);
   const [activeSiteIds, setActiveSiteIds] = useState<Set<string>>(new Set());
   const [showAllSites, setShowAllSites] = useState(false);
@@ -52,6 +54,20 @@ function UploadPageInner() {
   const [file, setFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [detected, setDetected] = useState<DetectedDocument | null>(null);
+
+  // Automatic reading on the backend (Claude). The quick file-name guess fills the form at once;
+  // when the AI reading comes back it replaces every field the person has not already changed.
+  const [aiState, setAiState] = useState<AiState>('idle');
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [aiNotes, setAiNotes] = useState<string[]>([]);
+  const readToken = useRef(0);
+  const inboxIdRef = useRef<string | null>(null);
+  const touched = useRef<Set<FieldKey>>(new Set());
+  const markTouched = (key: FieldKey) => {
+    touched.current.add(key);
+  };
+  // The reading finishes long after it starts, so it reads the form's latest type and site from here.
+  const current = useRef<{ docType: UploadDocType; siteId: string }>({ docType: 'pi', siteId: '' });
 
   // Form editable states
   const [docType, setDocType] = useState<UploadDocType>('pi');
@@ -134,8 +150,90 @@ function UploadPageInner() {
     });
   }, [selectedSiteId]);
 
-  // When a file is selected, run smart auto-detection
+  useEffect(() => {
+    current.current = { docType, siteId: selectedSiteId };
+  }, [docType, selectedSiteId]);
+
+  /** Drops the inbox copy of a document that was not (or not yet) saved, and ignores any reading still running. */
+  function abandonReading() {
+    readToken.current++;
+    if (inboxIdRef.current) closeInboxItem(inboxIdRef.current, { saved: false });
+    inboxIdRef.current = null;
+    setAiState('idle');
+    setAiMessage(null);
+    setAiNotes([]);
+  }
+
+  /** Has the backend read the file with Claude, then fills every field the person has not changed yet. */
+  async function startReading(selectedFile: File, fallback: DetectedDocument | null) {
+    const token = ++readToken.current;
+    if (!readableType(selectedFile)) {
+      setAiState('skipped');
+      setAiMessage('Automatic reading works for PDF and image files only, so please check the details below by hand.');
+      return;
+    }
+    setAiState('reading');
+    setAiMessage(null);
+    setAiNotes([]);
+    try {
+      const { inboxId, extracted } = await readDocument(selectedFile);
+      if (token !== readToken.current) {
+        closeInboxItem(inboxId, { saved: false }); // a different file was chosen meanwhile
+        return;
+      }
+      inboxIdRef.current = inboxId;
+      const read = await fromExtracted(extracted, sites);
+      if (token !== readToken.current) return;
+
+      const t = touched.current;
+      const finalType = t.has('docType') ? current.current.docType : read.docType;
+      if (!t.has('docType')) setDocType(read.docType);
+      const finalSiteId = !t.has('site') && read.siteId ? read.siteId : current.current.siteId;
+      if (!t.has('site') && read.siteId) setSelectedSiteId(read.siteId);
+      if (!t.has('docNumber') && read.docNumber) setDocNumber(read.docNumber);
+      if (!t.has('docDate') && read.date) setDocDate(read.date);
+      if (!t.has('amount') && read.amount != null) setAmount(String(read.amount));
+      if (!t.has('subject') && read.subjectOrScope) setSubjectOrScope(read.subjectOrScope);
+
+      // Keep the "replace existing" match from whichever reading found one, preferring the AI's
+      // (unless the person already chose a different kind of document than the AI read).
+      const aiMatchUsable = finalType === read.docType;
+      const existing = (aiMatchUsable ? read.existingRecord : null) ?? fallback?.existingRecord ?? null;
+      if (!t.has('override')) setIsOverride(!!existing);
+      setDetected({ ...read, existingRecord: existing });
+
+      // A PI that quotes its client's PO / work order number: link it to that PO if it is on this site.
+      if (finalType === 'pi' && extracted.po_reference && finalSiteId && !t.has('linkedPo')) {
+        const { data } = await supabase
+          .from('purchase_order')
+          .select('po_id')
+          .eq('site_id', finalSiteId)
+          .eq('po_number', extracted.po_reference.trim())
+          .maybeSingle();
+        if (data && token === readToken.current && !touched.current.has('linkedPo')) setLinkedPoId(data.po_id);
+      }
+
+      const notes = [...(extracted.notes ?? [])];
+      if (!read.siteId && (extracted.site_or_project || extracted.client_name)) {
+        notes.unshift(
+          `Could not match "${[extracted.client_name, extracted.site_or_project].filter(Boolean).join(' — ')}" to a site. Please pick the site.`
+        );
+      }
+      setAiNotes(notes);
+      setAiState('done');
+    } catch (err) {
+      if (token !== readToken.current) return;
+      const inboxId = (err as { inboxId?: string }).inboxId;
+      if (inboxId) closeInboxItem(inboxId, { saved: false });
+      setAiState('failed');
+      setAiMessage((err as Error).message);
+    }
+  }
+
+  // When a file is selected: quick guess from the file name at once, then the full AI reading
   async function handleFileSelect(selectedFile: File | null) {
+    abandonReading();
+    touched.current = new Set();
     setFile(selectedFile);
     setSuccessInfo(null);
     setError(null);
@@ -145,24 +243,26 @@ function UploadPageInner() {
     }
 
     setAnalyzing(true);
+    let quick: DetectedDocument | null = null;
     try {
-      const result = await detectDocument(selectedFile, sites);
-      setDetected(result);
+      quick = await detectDocument(selectedFile, sites);
+      setDetected(quick);
 
       // Pre-fill fields
-      setDocType(result.docType);
-      if (result.siteId) {
-        setSelectedSiteId(result.siteId);
+      setDocType(quick.docType);
+      if (quick.siteId) {
+        setSelectedSiteId(quick.siteId);
       }
-      setDocNumber(result.docNumber);
-      setDocDate(result.date);
-      setAmount(result.amount ? String(result.amount) : '');
-      setSubjectOrScope(result.subjectOrScope);
-      setIsOverride(!!result.existingRecord);
+      setDocNumber(quick.docNumber);
+      setDocDate(quick.date);
+      setAmount(quick.amount ? String(quick.amount) : '');
+      setSubjectOrScope(quick.subjectOrScope);
+      setIsOverride(!!quick.existingRecord);
     } catch (err) {
       setError(`Auto-analysis error: ${(err as Error).message}`);
     }
     setAnalyzing(false);
+    startReading(selectedFile, quick);
   }
 
   // Sites list to show in dropdown: active only, unless user requests all
@@ -192,6 +292,7 @@ function UploadPageInner() {
       const siteMeta = sites.find((s) => s.site_id === selectedSiteId);
       const parsedAmount = parseFloat(amount.replace(/,/g, '')) || 0;
       let newDocId: string;
+      let recordId: string | null = null;
       let detailsUrl = '';
       let isUpdate = false;
       let linkedCount = 0;
@@ -212,6 +313,7 @@ function UploadPageInner() {
             })
             .eq('pi_id', detected.existingRecord.id);
           if (updErr) throw new Error(updErr.message);
+          recordId = detected.existingRecord.id;
           detailsUrl = `/pi/?id=${detected.existingRecord.id}`;
           isUpdate = true;
         } else {
@@ -232,6 +334,7 @@ function UploadPageInner() {
             .select('pi_id')
             .single();
           if (insErr) throw new Error(insErr.message);
+          recordId = newPi.pi_id;
           detailsUrl = `/pi/?id=${newPi.pi_id}`;
         }
       } else if (docType === 'po') {
@@ -274,6 +377,7 @@ function UploadPageInner() {
           detailsUrl = `/po/?id=${newPo.po_id}`;
         }
 
+        recordId = targetPoId;
         // Link selected Proforma Invoices (PIs) to this Work Order
         if (targetPoId && selectedPiIds.length > 0) {
           const { error: linkErr } = await supabase
@@ -297,19 +401,25 @@ function UploadPageInner() {
             })
             .eq('invoice_id', detected.existingRecord.id);
           if (updErr) throw new Error(updErr.message);
+          recordId = detected.existingRecord.id;
           detailsUrl = `/invoices`;
           isUpdate = true;
         } else {
           newDocId = (await uploadDocument(file, 'invoice'))!;
-          const { error: insErr } = await supabase.from('tax_invoice').insert({
-            site_id: selectedSiteId,
-            invoice_number: docNumber.trim(),
-            invoice_date: docDate,
-            gross_invoice_value: parsedAmount,
-            status: 'issued',
-            document_id: newDocId,
-          });
+          const { data: newInv, error: insErr } = await supabase
+            .from('tax_invoice')
+            .insert({
+              site_id: selectedSiteId,
+              invoice_number: docNumber.trim(),
+              invoice_date: docDate,
+              gross_invoice_value: parsedAmount,
+              status: 'issued',
+              document_id: newDocId,
+            })
+            .select('invoice_id')
+            .single();
           if (insErr) throw new Error(insErr.message);
+          recordId = newInv.invoice_id;
           detailsUrl = `/invoices`;
         }
       } else {
@@ -330,6 +440,14 @@ function UploadPageInner() {
         linkedCount,
       });
 
+      // The record keeps its own copy of the file, so the inbox copy used for reading can go.
+      readToken.current++;
+      if (inboxIdRef.current) {
+        closeInboxItem(inboxIdRef.current, { saved: true, recordType: docType, recordId: recordId ?? newDocId });
+        inboxIdRef.current = null;
+      }
+      setAiState('idle');
+
       // Clear file
       setFile(null);
       setDetected(null);
@@ -340,6 +458,8 @@ function UploadPageInner() {
   }
 
   function handleReset() {
+    abandonReading();
+    touched.current = new Set();
     setFile(null);
     setDetected(null);
     setSuccessInfo(null);
@@ -454,6 +574,53 @@ function UploadPageInner() {
                 <Sparkles size={16} /> Analyzing document content & detecting destination…
               </div>
             )}
+
+            {file && aiState === 'reading' && (
+              <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 text-sm text-indigo-900">
+                <Loader2 size={16} className="mt-0.5 flex-none animate-spin text-indigo-600" />
+                <div>
+                  <p className="font-semibold">Reading the document with AI…</p>
+                  <p className="mt-0.5 text-xs text-indigo-800/80">
+                    Usually 10–30 seconds (up to a minute if the reading service was asleep). The form below already has a quick
+                    guess; anything you change yourself is kept.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {file && aiState === 'done' && (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-950">
+                <p className="flex items-center gap-2 font-semibold">
+                  <Sparkles size={15} className="text-emerald-600" /> Read by AI — please check the details below before saving.
+                </p>
+                {aiNotes.length > 0 && (
+                  <ul className="mt-1.5 list-disc space-y-0.5 pl-6 text-xs text-emerald-900/90">
+                    {aiNotes.map((n, i) => (
+                      <li key={i}>{n}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {file && (aiState === 'failed' || aiState === 'skipped') && aiMessage && (
+              <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
+                <AlertTriangle size={16} className="mt-0.5 flex-none text-amber-700" />
+                <div className="flex-1">
+                  <p className="font-semibold">{aiState === 'failed' ? 'Could not read this automatically' : 'Not read automatically'}</p>
+                  <p className="mt-0.5 text-xs text-amber-900/90">{aiMessage}</p>
+                  {aiState === 'failed' && (
+                    <button
+                      type="button"
+                      onClick={() => startReading(file, detected)}
+                      className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-900 hover:underline"
+                    >
+                      <RefreshCw size={12} /> Read again
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -465,7 +632,8 @@ function UploadPageInner() {
                 <span>Destination & Document Details</span>
                 {detected && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800">
-                    <Sparkles size={12} /> Auto-detected ({detected.confidence} confidence)
+                    <Sparkles size={12} /> {aiState === 'done' ? 'Read by AI' : 'Quick guess from file'} ({detected.confidence}{' '}
+                    confidence)
                   </span>
                 )}
               </div>
@@ -489,7 +657,7 @@ function UploadPageInner() {
                         <input
                           type="checkbox"
                           checked={isOverride}
-                          onChange={(e) => setIsOverride(e.target.checked)}
+                          onChange={(e) => { markTouched('override'); setIsOverride(e.target.checked); }}
                           className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
                         />
                         Replace / Overwrite previous version (deletes old draft file from storage and updates SOA)
@@ -503,7 +671,7 @@ function UploadPageInner() {
                 <FieldSelect
                   label="Document Category"
                   value={docType}
-                  onChange={(v) => setDocType(v as UploadDocType)}
+                  onChange={(v) => { markTouched('docType'); setDocType(v as UploadDocType); }}
                   options={[
                     { value: 'pi', label: 'Proforma Invoice (PI)' },
                     { value: 'po', label: 'Purchase Order / Work Order (PO/WO)' },
@@ -526,7 +694,7 @@ function UploadPageInner() {
                   </div>
                   <select
                     value={selectedSiteId}
-                    onChange={(e) => setSelectedSiteId(e.target.value)}
+                    onChange={(e) => { markTouched('site'); setSelectedSiteId(e.target.value); }}
                     className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                   >
                     <option value="">Select site…</option>
@@ -541,7 +709,7 @@ function UploadPageInner() {
                 <FieldInput
                   label="Document Number"
                   value={docNumber}
-                  onChange={setDocNumber}
+                  onChange={(v) => { markTouched('docNumber'); setDocNumber(v); }}
                   placeholder="e.g. S5/PI/2026/042 or WO-CHSSPL-007"
                 />
 
@@ -549,20 +717,20 @@ function UploadPageInner() {
                   label="Document Date"
                   type="date"
                   value={docDate}
-                  onChange={setDocDate}
+                  onChange={(v) => { markTouched('docDate'); setDocDate(v); }}
                 />
 
                 <FieldInput
                   label="Total Value / Amount (INR with GST)"
                   value={amount}
-                  onChange={setAmount}
+                  onChange={(v) => { markTouched('amount'); setAmount(v); }}
                   placeholder="e.g. 145000"
                 />
 
                 <FieldInput
                   label="Scope of Work / Subject / Remarks"
                   value={subjectOrScope}
-                  onChange={setSubjectOrScope}
+                  onChange={(v) => { markTouched('subject'); setSubjectOrScope(v); }}
                   placeholder="e.g. Tile Work on Lily Pond"
                 />
 
@@ -572,7 +740,7 @@ function UploadPageInner() {
                     <FieldSelect
                       label="Link to Work Order / PO (optional)"
                       value={linkedPoId}
-                      onChange={setLinkedPoId}
+                      onChange={(v) => { markTouched('linkedPo'); setLinkedPoId(v); }}
                       options={sitePos.map((p) => ({ value: p.po_id, label: `PO/WO ${p.po_number}` }))}
                     />
                   </div>

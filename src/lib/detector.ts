@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { UploadDocType } from '@/lib/documents';
+import type { Extracted } from '@/lib/extractApi';
 
 export interface SiteMeta {
   site_id: string;
@@ -186,6 +187,32 @@ export async function detectDocument(
   }
 
   // 7. Check Supabase for existing record / revision
+  const existingRecord = await findExistingRecord(docType, docNumber);
+
+  const confidence: 'high' | 'medium' | 'low' =
+    matchedSite && docNumber ? 'high' : matchedSite || docNumber ? 'medium' : 'low';
+
+  return {
+    docType,
+    docTypeName,
+    siteId: matchedSite?.site_id ?? null,
+    clientId: matchedSite?.client_id ?? null,
+    siteName: matchedSite?.site_name ?? null,
+    clientName: matchedSite?.client_name ?? null,
+    docNumber,
+    date,
+    amount,
+    subjectOrScope,
+    confidence,
+    existingRecord,
+  };
+}
+
+/** Looks up a PI / PO / tax invoice with this number, so a new copy can replace the old one. */
+export async function findExistingRecord(
+  docType: UploadDocType,
+  docNumber: string
+): Promise<DetectedDocument['existingRecord']> {
   let existingRecord: DetectedDocument['existingRecord'] = null;
 
   if (docNumber) {
@@ -239,22 +266,62 @@ export async function detectDocument(
       }
     }
   }
+  return existingRecord;
+}
 
-  const confidence: 'high' | 'medium' | 'low' =
-    matchedSite && docNumber ? 'high' : matchedSite || docNumber ? 'medium' : 'low';
+const DOC_TYPE_FROM_AI: Record<Extracted['document_type'], { docType: UploadDocType; name: string }> = {
+  purchase_order: { docType: 'po', name: 'Purchase Order / Work Order' },
+  proforma_invoice: { docType: 'pi', name: 'Proforma Invoice (PI)' },
+  tax_invoice: { docType: 'invoice', name: 'Tax Invoice' },
+  payment_advice: { docType: 'payment_advice', name: 'Payment Advice / Receipt' },
+  other: { docType: 'other', name: 'General Document' },
+};
 
+/** Picks the site whose site / client name words best match what the AI read off the document. */
+function matchSiteFromRead(ex: Extracted, knownSites: SiteMeta[]): SiteMeta | null {
+  const siteText = (ex.site_or_project ?? '').toLowerCase();
+  const clientText = (ex.client_name ?? '').toLowerCase();
+  if (!siteText && !clientText) return null;
+  let best: SiteMeta | null = null;
+  let bestScore = 0;
+  for (const s of knownSites) {
+    let score = 0;
+    for (const w of s.site_name.toLowerCase().split(/[\s,\-]+/).filter((w) => w.length > 3)) {
+      if (siteText.includes(w)) score += 5;
+      else if (clientText.includes(w)) score += 1;
+    }
+    for (const w of s.client_name.toLowerCase().split(/[\s,\-]+/).filter((w) => w.length > 3)) {
+      if (clientText.includes(w)) score += 3;
+      else if (siteText.includes(w)) score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = s;
+    }
+  }
+  return best;
+}
+
+/** Turns what the backend read into the same shape the quick file-name guess produces. */
+export async function fromExtracted(ex: Extracted, knownSites: SiteMeta[]): Promise<DetectedDocument> {
+  const kind = DOC_TYPE_FROM_AI[ex.document_type] ?? DOC_TYPE_FROM_AI.other;
+  const site = matchSiteFromRead(ex, knownSites);
+  const docNumber = (ex.document_number ?? '').trim();
+  const isDate = (d: string | null) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  const date = isDate(ex.document_date) ? ex.document_date! : isDate(ex.payment_date) ? ex.payment_date! : '';
+  const amount = ex.total_amount ?? ex.payment_amount ?? null;
   return {
-    docType,
-    docTypeName,
-    siteId: matchedSite?.site_id ?? null,
-    clientId: matchedSite?.client_id ?? null,
-    siteName: matchedSite?.site_name ?? null,
-    clientName: matchedSite?.client_name ?? null,
+    docType: kind.docType,
+    docTypeName: kind.name,
+    siteId: site?.site_id ?? null,
+    clientId: site?.client_id ?? null,
+    siteName: site?.site_name ?? null,
+    clientName: site?.client_name ?? null,
     docNumber,
     date,
     amount,
-    subjectOrScope,
-    confidence,
-    existingRecord,
+    subjectOrScope: (ex.scope_description ?? '').trim(),
+    confidence: ex.overall_confidence,
+    existingRecord: await findExistingRecord(kind.docType, docNumber),
   };
 }

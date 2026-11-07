@@ -15,4 +15,4 @@ Then create the login user under Authentication → Users and switch off public 
 ## Deploy (GitHub Pages)
 The workflow in `.github/workflows/pages.yml` builds a static export and publishes it. In the repo settings set Pages → Source = GitHub Actions, and add two Actions secrets:
 `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (the *publishable* key only — never the secret key).
-Automatic document reading is off in this static version (it needed a server to hold the AI key).
+Automatic document reading: the Upload page sends PDFs and images to the Render backend (`POST /po-extract`, see `src/lib/extractApi.ts`), which reads them with Claude as the signed-in user. The backend needs `ANTHROPIC_API_KEY`, `PO_SUPABASE_URL` and `PO_SUPABASE_ANON_KEY` set for this project. Set `NEXT_PUBLIC_EXTRACT_URL` to point at a different backend.

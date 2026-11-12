@@ -76,7 +76,6 @@ export async function detectDocument(
 ): Promise<DetectedDocument> {
   const fileName = file.name;
   const fileText = await extractTextPreview(file);
-  const combined = `${fileName} ${fileText}`;
   const cleanName = fileName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9\-\/]+/g, ' ');
 
   // 1. Detect Document Type
@@ -112,6 +111,11 @@ export async function detectDocument(
     docTypeName = 'TDS Certificate';
   }
 
+  // Everything below reads the FILE NAME only. The raw bytes of a PDF are mostly fonts, metadata and
+  // compressed streams, so matching names or numbers in them gives false hits (e.g. "TImes" read as an
+  // invoice number, or the author's name matching a client). Only the document-type phrases above use them.
+  const nameText = fileName.replace(/\.[^.]+$/, '');
+
   // 2. Match Client and Site
   let matchedSite: SiteMeta | null = null;
   let bestScore = 0;
@@ -129,7 +133,6 @@ export async function detectDocument(
 
     for (const kw of keywords) {
       if (cleanName.toLowerCase().includes(kw)) score += 5;
-      if (fileText.toLowerCase().includes(kw)) score += 2;
     }
 
     if (score > bestScore) {
@@ -140,10 +143,12 @@ export async function detectDocument(
 
   // 3. Extract Document Number
   let docNumber = '';
-  const woMatch = combined.match(/\b(WO-[A-Z0-9\-]+|PO-[A-Z0-9\-]+)\b/i);
-  const s5Match = combined.match(/\b(S5\/?(?:PI|I)?[\w\-/]+)\b/i);
-  const piNumMatch = combined.match(/\b(?:PI)[_\-\s]?(\d{2}-\d{2}-\d{2,4}|\d{3,5})\b/i);
-  const invNumMatch = combined.match(/\b(?:INV|TI)[_\-\s]?([A-Z0-9\-\/]+)\b/i);
+  // Each pattern must capture at least one digit, so words like "Times" or "Invoice" are never a number.
+  const woMatch = nameText.match(/(?:^|[^A-Za-z])((?:WO|PO)-(?=[A-Z0-9\-]*\d)[A-Z0-9\-]+)/i);
+  const s5Match = nameText.match(/(?:^|[^A-Za-z])(S5\/?(?:PI|I)?(?=[A-Za-z0-9\-/]*\d)[A-Za-z0-9\-/]+)/i);
+  const dcMatch = nameText.match(/(?:^|[^A-Za-z])((?:DC|CH)[-\s]?\d[A-Za-z0-9\-/]*)/i);
+  const piNumMatch = nameText.match(/(?:^|[^A-Za-z])PI[_\-\s]?(\d{2}-\d{2}-\d{2,4}|\d{3,5})(?!\d)/i);
+  const invNumMatch = nameText.match(/(?:^|[^A-Za-z])(?:INV|TI)[_\-\s]?((?=[A-Z0-9\-\/]*\d)[A-Z0-9\-\/]+)/i);
 
   if (woMatch) {
     docNumber = woMatch[1];
@@ -153,13 +158,15 @@ export async function detectDocument(
     docNumber = `S5/PI/${piNumMatch[1]}`;
   } else if (invNumMatch) {
     docNumber = invNumMatch[1];
+  } else if (docType === 'challan' && dcMatch) {
+    docNumber = dcMatch[1];
   }
 
   // 4. Extract Date
   let date = '';
   const dateMatch =
-    combined.match(/\b(\d{4}[-_]\d{2}[-_]\d{2})\b/) ||
-    combined.match(/\b(\d{2})[-/.](\d{2})[-/.](\d{4})\b/);
+    nameText.match(/(?:^|\D)(\d{4}[-_]\d{2}[-_]\d{2})(?!\d)/) ||
+    nameText.match(/(?:^|\D)(\d{2})[-/._](\d{2})[-/._](\d{4})(?!\d)/);
 
   if (dateMatch) {
     if (dateMatch[1] && dateMatch[1].length === 10) {
@@ -173,7 +180,7 @@ export async function detectDocument(
 
   // 5. Extract Amount
   let amount: number | null = null;
-  const amtMatch = combined.match(/(?:Total|Amount|Value|INR|Rs\.?|₹)[\s:]*([0-9,]+(?:\.[0-9]{2})?)/i);
+  const amtMatch = nameText.match(/(?:Total|Amount|Value|INR|Rs\.?|₹)[\s:_\-]*(\d[0-9,]{2,}(?:\.[0-9]{2})?)/i);
   if (amtMatch) {
     const rawNum = amtMatch[1].replace(/,/g, '');
     const parsed = parseFloat(rawNum);
@@ -184,10 +191,7 @@ export async function detectDocument(
 
   // 6. Extract Subject / Scope
   let subjectOrScope = '';
-  const scopeMatch = combined.match(/(?:Scope|Subject|Description|Work)[\s:]+([^\r\n.;]+)/i);
-  if (scopeMatch) {
-    subjectOrScope = scopeMatch[1].trim();
-  } else {
+  {
     // derive clean summary from filename if possible
     const cleanTokens = cleanName.split(/\s+/).filter((t) => t.length > 2 && !/^(pi|po|wo|tax|invoice|s5)$/i.test(t));
     if (cleanTokens.length > 1) {

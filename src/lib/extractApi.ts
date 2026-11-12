@@ -13,6 +13,8 @@ export const READABLE_TYPES: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
+  // Word: the backend turns it into text (tables kept) before Claude reads it. Old .doc files are not supported.
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 export const MAX_READ_BYTES = 10 * 1024 * 1024;
 
@@ -88,7 +90,7 @@ export async function aiReadingEnabled(): Promise<boolean> {
  */
 export async function readDocument(file: File): Promise<{ inboxId: string; extracted: Extracted }> {
   const mime = readableType(file);
-  if (!mime) throw new Error('Automatic reading works for PDF, PNG, JPG and WEBP files only.');
+  if (!mime) throw new Error('Automatic reading works for PDF, Word (.docx), PNG, JPG and WEBP files only.');
   if (file.size > MAX_READ_BYTES) throw new Error('This file is larger than 10 MB, so it cannot be read automatically.');
 
   const path = `inbox/${crypto.randomUUID()}_${file.name.replace(/[^\w.\-]+/g, '_')}`;

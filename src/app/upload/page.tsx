@@ -238,7 +238,9 @@ function UploadPageInner() {
     const token = ++readToken.current;
     if (!readableType(selectedFile)) {
       setAiState('skipped');
-      setAiMessage('Automatic reading works for PDF and image files only, so please check the details below by hand.');
+      setAiMessage(
+        'Automatic reading works for PDF, Word (.docx) and image files only, so please check the details below by hand. (An old .doc file can be saved as .docx in Word.)'
+      );
       return;
     }
     setAiState('reading');

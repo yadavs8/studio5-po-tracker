@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutGrid, UploadCloud, Building2, FileText, FileCheck, Receipt, Wallet, FileSpreadsheet, LogOut } from 'lucide-react';
+import { LayoutGrid, UploadCloud, FolderOpen, Building2, FileText, FileCheck, Receipt, Wallet, FileSpreadsheet, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutGrid, iconColor: 'text-blue-500' },
   { href: '/upload', label: 'Upload document', icon: UploadCloud, iconColor: 'text-violet-500' },
+  { href: '/documents', label: 'Documents', icon: FolderOpen, iconColor: 'text-teal-500' },
   { href: '/master-data', label: 'Clients & sites', icon: Building2, iconColor: 'text-amber-500' },
   { href: '/pis', label: 'Proforma invoices', icon: FileText, iconColor: 'text-sky-500' },
   { href: '/pos', label: 'POs / WOs', icon: FileCheck, iconColor: 'text-indigo-500' },
@@ -25,6 +26,7 @@ export function NavBar() {
 
   const isActive = (href: string) =>
     pathname === href ||
+    (href === '/documents' && pathname === '/document') ||
     pathname.startsWith(href + '/') ||
     (href === '/dashboard' && pathname.startsWith('/site')) ||
     (href === '/pis' && (pathname === '/pi' || pathname.startsWith('/pi/'))) ||

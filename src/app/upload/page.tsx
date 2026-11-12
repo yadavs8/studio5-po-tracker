@@ -2,21 +2,22 @@
 
 import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { formatINR } from '@/lib/format';
-import { uploadDocument, replaceDocument, UploadDocType } from '@/lib/documents';
-import { detectDocument, fromExtracted, SiteMeta, DetectedDocument } from '@/lib/detector';
-import { readDocument, readableType, closeInboxItem } from '@/lib/extractApi';
+import { friendlyError } from '@/lib/plain';
+import { confirmBeforeStart } from '@/lib/period';
 import {
-  PageHeader,
-  ErrorBanner,
-  Panel,
-  PrimaryButton,
-  GhostButton,
-  FieldInput,
-  FieldSelect,
-  buttonClass,
-} from '@/lib/ui';
+  uploadDocument,
+  discardDocument,
+  UploadDocType,
+  DOC_TYPES,
+  DOC_TYPE_LABEL,
+  MAX_UPLOAD_BYTES,
+} from '@/lib/documents';
+import { detectDocument, fromExtracted, findExistingRecord, SiteMeta, DetectedDocument, ExistingRecord } from '@/lib/detector';
+import { readDocument, readableType, closeInboxItem } from '@/lib/extractApi';
+import { PageHeader, ErrorBanner, Panel, PrimaryButton, GhostButton, FieldInput, FieldSelect } from '@/lib/ui';
 import {
   UploadCloud,
   FileCheck2,
@@ -27,10 +28,14 @@ import {
   RefreshCw,
   Link2,
   Loader2,
+  FolderOpen,
 } from 'lucide-react';
 
 type AiState = 'idle' | 'reading' | 'done' | 'failed' | 'skipped';
-type FieldKey = 'docType' | 'site' | 'docNumber' | 'docDate' | 'amount' | 'subject' | 'override' | 'linkedPo';
+type FieldKey = 'docType' | 'site' | 'docNumber' | 'docDate' | 'amount' | 'taxable' | 'gst' | 'subject' | 'linkedPo';
+
+/** Kinds of document that become a PO / PI / tax invoice record as well as a filed document. */
+const RECORD_TYPES: UploadDocType[] = ['po', 'pi', 'invoice'];
 
 interface SitePoOpt {
   po_id: string;
@@ -43,13 +48,41 @@ interface SitePiOpt {
   amount: number;
   subject: string | null;
   po_id: string | null;
+  status: string;
 }
 
+interface SiteRow {
+  site_id: string;
+  site_name: string;
+  client_id: string;
+  client: { display_name: string } | null;
+}
+
+interface SuccessInfo {
+  documentId: string;
+  title: string;
+  typeLabel: string;
+  siteId: string;
+  siteName: string;
+  recordUrl: string | null;
+  isUpdate: boolean;
+  linkedCount: number;
+  warning: string | null;
+}
+
+/** "1,45,000.50", "₹ 145000" → 145000.5; empty or invalid → NaN. */
+const toNum = (s: string) => {
+  const t = s.replace(/[₹,\s]/g, '');
+  return t === '' ? NaN : Number(t);
+};
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 function UploadPageInner() {
+  // Opened from a site page: that site is kept unless the person changes it.
+  const presetSite = useSearchParams().get('site') ?? '';
   const [sites, setSites] = useState<SiteMeta[]>([]);
   const [activeSiteIds, setActiveSiteIds] = useState<Set<string>>(new Set());
   const [showAllSites, setShowAllSites] = useState(false);
-  const [loadingSites, setLoadingSites] = useState(true);
 
   const [file, setFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -66,93 +99,114 @@ function UploadPageInner() {
   const markTouched = (key: FieldKey) => {
     touched.current.add(key);
   };
-  // The reading finishes long after it starts, so it reads the form's latest type and site from here.
-  const current = useRef<{ docType: UploadDocType; siteId: string }>({ docType: 'pi', siteId: '' });
 
-  // Form editable states
+  // Form
   const [docType, setDocType] = useState<UploadDocType>('pi');
-  const [selectedSiteId, setSelectedSiteId] = useState('');
+  const [siteId, setSiteId] = useState(presetSite);
   const [docNumber, setDocNumber] = useState('');
   const [docDate, setDocDate] = useState('');
   const [amount, setAmount] = useState('');
-  const [subjectOrScope, setSubjectOrScope] = useState('');
-  const [isOverride, setIsOverride] = useState(true);
+  const [taxable, setTaxable] = useState('');
+  const [gst, setGst] = useState('');
+  const [subject, setSubject] = useState('');
 
-  // Cross-linking: PO to PIs and PI to PO/WO
-  const [sitePos, setSitePos] = useState<SitePoOpt[]>([]);
-  const [sitePis, setSitePis] = useState<SitePiOpt[]>([]);
-  const [linkedPoId, setLinkedPoId] = useState('');
+  // Linking. linkedPoId === null means the person has not picked one, so the PO number the AI read is used.
+  const [linkedPoId, setLinkedPoId] = useState<string | null>(null);
+  const [poReference, setPoReference] = useState<string | null>(null);
   const [selectedPiIds, setSelectedPiIds] = useState<string[]>([]);
+  const [invoicePiId, setInvoicePiId] = useState('');
+  const [siteLists, setSiteLists] = useState<{ siteId: string; pos: SitePoOpt[]; pis: SitePiOpt[] }>({ siteId: '', pos: [], pis: [] });
+
+  // A PO / PI / tax invoice with the same number on the same site, which this upload can replace.
+  const [existingLookup, setExistingLookup] = useState<{ key: string; rec: ExistingRecord | null }>({ key: '', rec: null });
+  const [overrideChoice, setOverrideChoice] = useState<boolean | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successInfo, setSuccessInfo] = useState<{
-    documentId: string;
-    title: string;
-    detailsUrl: string;
-    siteName: string;
-    isUpdate: boolean;
-    linkedCount?: number;
-  } | null>(null);
+  const [success, setSuccess] = useState<SuccessInfo | null>(null);
 
-  // Load clients and sites, plus determine active sites
+  // The reading finishes long after it starts, so it reads the form's latest type and site from here.
+  const current = useRef<{ docType: UploadDocType; siteId: string }>({ docType: 'pi', siteId: '' });
   useEffect(() => {
-    async function loadData() {
-      setLoadingSites(true);
-      try {
-        const [siteRes, poRes, piRes, invRes] = await Promise.all([
-          supabase.from('site').select('site_id, site_name, client_id, client:client_id(display_name)').order('site_name'),
-          supabase.from('purchase_order').select('site_id'),
-          supabase.from('proforma_invoice').select('site_id'),
-          supabase.from('tax_invoice').select('site_id'),
-        ]);
+    current.current = { docType, siteId };
+  }, [docType, siteId]);
 
-        const allSites: SiteMeta[] = (siteRes.data ?? []).map((s: any) => ({
+  // Sites, and which of them already have anything recorded
+  useEffect(() => {
+    (async () => {
+      const [siteRes, poRes, piRes, invRes] = await Promise.all([
+        supabase.from('site').select('site_id, site_name, client_id, client:client_id(display_name)').order('site_name'),
+        supabase.from('purchase_order').select('site_id'),
+        supabase.from('proforma_invoice').select('site_id'),
+        supabase.from('tax_invoice').select('site_id'),
+      ]);
+      if (siteRes.error) {
+        setError(friendlyError(siteRes.error));
+        return;
+      }
+      setSites(
+        ((siteRes.data ?? []) as unknown as SiteRow[]).map((s) => ({
           site_id: s.site_id,
           site_name: s.site_name,
           client_id: s.client_id,
           client_name: s.client?.display_name ?? 'Client',
-        }));
-        setSites(allSites);
-
-        const active = new Set<string>();
-        (poRes.data ?? []).forEach((p: any) => p.site_id && active.add(p.site_id));
-        (piRes.data ?? []).forEach((p: any) => p.site_id && active.add(p.site_id));
-        (invRes.data ?? []).forEach((i: any) => i.site_id && active.add(i.site_id));
-        setActiveSiteIds(active);
-      } catch (err) {
-        setError((err as Error).message);
+        }))
+      );
+      const active = new Set<string>();
+      for (const res of [poRes, piRes, invRes]) {
+        ((res.data ?? []) as { site_id: string | null }[]).forEach((r) => r.site_id && active.add(r.site_id));
       }
-      setLoadingSites(false);
-    }
-    loadData();
+      setActiveSiteIds(active);
+    })();
   }, []);
 
-  // When selectedSiteId changes, load existing POs and PIs for cross-linking
+  // The chosen site's POs and PIs, for linking
   useEffect(() => {
-    if (!selectedSiteId) {
-      setSitePos([]);
-      setSitePis([]);
-      setLinkedPoId('');
-      setSelectedPiIds([]);
-      return;
-    }
-
+    if (!siteId) return;
+    let alive = true;
     Promise.all([
-      supabase.from('purchase_order').select('po_id, po_number').eq('site_id', selectedSiteId).order('po_date', { ascending: false }),
-      supabase.from('proforma_invoice').select('pi_id, pi_number, amount, subject, po_id').eq('site_id', selectedSiteId).order('pi_date', { ascending: false }),
+      supabase.from('purchase_order').select('po_id, po_number').eq('site_id', siteId).order('po_date', { ascending: false }),
+      supabase
+        .from('proforma_invoice')
+        .select('pi_id, pi_number, amount, subject, po_id, status')
+        .eq('site_id', siteId)
+        .order('pi_date', { ascending: false }),
     ]).then(([poRes, piRes]) => {
-      setSitePos((poRes.data ?? []) as SitePoOpt[]);
-      const pis = (piRes.data ?? []) as SitePiOpt[];
-      setSitePis(pis);
-      // Pre-select unlinked PIs when uploading a new Work Order
-      setSelectedPiIds(pis.filter((p) => !p.po_id).map((p) => p.pi_id));
+      if (alive) setSiteLists({ siteId, pos: (poRes.data ?? []) as SitePoOpt[], pis: (piRes.data ?? []) as SitePiOpt[] });
     });
-  }, [selectedSiteId]);
+    return () => {
+      alive = false;
+    };
+  }, [siteId]);
+  const sitePos = siteLists.siteId === siteId ? siteLists.pos : [];
+  const sitePis = siteLists.siteId === siteId ? siteLists.pis : [];
 
+  // Look for a record with this number on this site (after typing stops for a moment)
+  const isRecordType = RECORD_TYPES.includes(docType);
+  const lookupKey = isRecordType && siteId && docNumber.trim() ? `${docType}|${siteId}|${docNumber.trim()}` : '';
   useEffect(() => {
-    current.current = { docType, siteId: selectedSiteId };
-  }, [docType, selectedSiteId]);
+    if (!lookupKey) return;
+    const [type, site, num] = lookupKey.split('|');
+    const timer = setTimeout(async () => {
+      const rec = await findExistingRecord(type as UploadDocType, num, site);
+      setExistingLookup({ key: lookupKey, rec });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [lookupKey]);
+  const existing = lookupKey && existingLookup.key === lookupKey ? existingLookup.rec : null;
+  const isOverride = !!existing && (overrideChoice ?? true);
+
+  // PO link: what the person picked, else the PO whose number the AI read off the document
+  const autoPoId =
+    poReference && sitePos.find((p) => p.po_number.trim().toLowerCase() === poReference.toLowerCase())?.po_id;
+  const poId = linkedPoId ?? autoPoId ?? '';
+
+  function chooseSite(id: string) {
+    setSiteId(id);
+    setLinkedPoId(null);
+    setSelectedPiIds([]);
+    setInvoicePiId('');
+  }
 
   /** Drops the inbox copy of a document that was not (or not yet) saved, and ignores any reading still running. */
   function abandonReading() {
@@ -164,8 +218,23 @@ function UploadPageInner() {
     setAiNotes([]);
   }
 
+  function fillForm(d: DetectedDocument, onlyUntouched: boolean) {
+    // A fresh file refills everything except a site the person already chose (or came from).
+    const t = onlyUntouched ? touched.current : new Set<FieldKey>([...touched.current].filter((k) => k === 'site'));
+    if (!t.has('docType')) setDocType(d.docType);
+    if (!t.has('site') && d.siteId) chooseSite(d.siteId);
+    if (!t.has('docNumber') && (d.docNumber || !onlyUntouched)) setDocNumber(d.docNumber);
+    if (!t.has('docDate') && (d.date || !onlyUntouched)) setDocDate(d.date);
+    if (!t.has('amount') && (d.amount != null || !onlyUntouched)) setAmount(d.amount != null ? String(d.amount) : '');
+    if (!t.has('subject') && (d.subjectOrScope || !onlyUntouched)) setSubject(d.subjectOrScope);
+    const tax = d.taxable ?? (d.amount != null && d.gst != null ? round2(d.amount - d.gst) : null);
+    if (!t.has('taxable') && (tax != null || !onlyUntouched)) setTaxable(tax != null ? String(tax) : '');
+    if (!t.has('gst') && (d.gst != null || !onlyUntouched)) setGst(d.gst != null ? String(d.gst) : '');
+    if (d.poReference) setPoReference(d.poReference);
+  }
+
   /** Has the backend read the file with Claude, then fills every field the person has not changed yet. */
-  async function startReading(selectedFile: File, fallback: DetectedDocument | null) {
+  async function startReading(selectedFile: File) {
     const token = ++readToken.current;
     if (!readableType(selectedFile)) {
       setAiState('skipped');
@@ -182,36 +251,9 @@ function UploadPageInner() {
         return;
       }
       inboxIdRef.current = inboxId;
-      const read = await fromExtracted(extracted, sites);
-      if (token !== readToken.current) return;
-
-      const t = touched.current;
-      const finalType = t.has('docType') ? current.current.docType : read.docType;
-      if (!t.has('docType')) setDocType(read.docType);
-      const finalSiteId = !t.has('site') && read.siteId ? read.siteId : current.current.siteId;
-      if (!t.has('site') && read.siteId) setSelectedSiteId(read.siteId);
-      if (!t.has('docNumber') && read.docNumber) setDocNumber(read.docNumber);
-      if (!t.has('docDate') && read.date) setDocDate(read.date);
-      if (!t.has('amount') && read.amount != null) setAmount(String(read.amount));
-      if (!t.has('subject') && read.subjectOrScope) setSubjectOrScope(read.subjectOrScope);
-
-      // Keep the "replace existing" match from whichever reading found one, preferring the AI's
-      // (unless the person already chose a different kind of document than the AI read).
-      const aiMatchUsable = finalType === read.docType;
-      const existing = (aiMatchUsable ? read.existingRecord : null) ?? fallback?.existingRecord ?? null;
-      if (!t.has('override')) setIsOverride(!!existing);
-      setDetected({ ...read, existingRecord: existing });
-
-      // A PI that quotes its client's PO / work order number: link it to that PO if it is on this site.
-      if (finalType === 'pi' && extracted.po_reference && finalSiteId && !t.has('linkedPo')) {
-        const { data } = await supabase
-          .from('purchase_order')
-          .select('po_id')
-          .eq('site_id', finalSiteId)
-          .eq('po_number', extracted.po_reference.trim())
-          .maybeSingle();
-        if (data && token === readToken.current && !touched.current.has('linkedPo')) setLinkedPoId(data.po_id);
-      }
+      const read = fromExtracted(extracted, sites);
+      fillForm(read, true);
+      setDetected(read);
 
       const notes = [...(extracted.notes ?? [])];
       if (!read.siteId && (extracted.site_or_project || extracted.client_name)) {
@@ -233,226 +275,204 @@ function UploadPageInner() {
   // When a file is selected: quick guess from the file name at once, then the full AI reading
   async function handleFileSelect(selectedFile: File | null) {
     abandonReading();
-    touched.current = new Set();
+    touched.current = new Set<FieldKey>(presetSite && siteId === presetSite ? ['site'] : []);
+    setOverrideChoice(null);
+    setPoReference(null);
     setFile(selectedFile);
-    setSuccessInfo(null);
+    setSuccess(null);
     setError(null);
     if (!selectedFile) {
       setDetected(null);
       return;
     }
+    if (selectedFile.size > MAX_UPLOAD_BYTES) {
+      setError('This file is larger than 25 MB. Please upload a smaller copy.');
+      setFile(null);
+      return;
+    }
 
     setAnalyzing(true);
-    let quick: DetectedDocument | null = null;
     try {
-      quick = await detectDocument(selectedFile, sites);
+      const quick = await detectDocument(selectedFile, sites);
       setDetected(quick);
-
-      // Pre-fill fields
-      setDocType(quick.docType);
-      if (quick.siteId) {
-        setSelectedSiteId(quick.siteId);
-      }
-      setDocNumber(quick.docNumber);
-      setDocDate(quick.date);
-      setAmount(quick.amount ? String(quick.amount) : '');
-      setSubjectOrScope(quick.subjectOrScope);
-      setIsOverride(!!quick.existingRecord);
+      fillForm(quick, false);
     } catch (err) {
-      setError(`Auto-analysis error: ${(err as Error).message}`);
+      setError(`Could not look at the file: ${(err as Error).message}`);
     }
     setAnalyzing(false);
-    startReading(selectedFile, quick);
+    startReading(selectedFile);
   }
 
-  // Sites list to show in dropdown: active only, unless user requests all
-  const filteredSites = showAllSites
-    ? sites
-    : sites.filter((s) => activeSiteIds.has(s.site_id) || s.site_id === selectedSiteId);
+  const filteredSites = showAllSites ? sites : sites.filter((s) => activeSiteIds.has(s.site_id) || s.site_id === siteId);
+  const taxableNum = toNum(taxable);
+  const gstNum = toNum(gst);
+  const invoiceTotal = round2((Number.isNaN(taxableNum) ? 0 : taxableNum) + (Number.isNaN(gstNum) ? 0 : gstNum));
+  const openPis = sitePis.filter((p) => p.status !== 'converted_to_invoice');
+  const unlinkedPis = sitePis.filter((p) => !p.po_id);
 
-  // Submit and route document
+  /** Checks the form; returns a message for the first problem, or null. */
+  function problem(): string | null {
+    if (!file) return 'Please choose a file to upload.';
+    if (!siteId) return 'Please choose the site this document belongs to.';
+    if (isRecordType) {
+      if (!docNumber.trim()) return 'Please fill in the document number.';
+      if (!docDate) return 'Please fill in the document date.';
+      if (docType === 'invoice') {
+        if (!(taxableNum > 0)) return 'Please fill in the taxable value (amount before GST).';
+        if (gst.trim() && !(gstNum >= 0)) return 'The GST amount is not a valid number.';
+      } else if (!(toNum(amount) > 0)) {
+        return 'Please fill in the total amount (with GST). It must be above zero.';
+      }
+    }
+    return null;
+  }
+
   async function handleSubmit() {
-    if (!file) {
-      setError('Please choose a file to upload.');
+    const p = problem();
+    if (p) {
+      setError(p);
       return;
     }
-    if (!selectedSiteId) {
-      setError('Please select the site this document belongs to.');
-      return;
-    }
-    if (!docNumber.trim()) {
-      setError('Please provide a document number.');
-      return;
-    }
+    if (docDate && !confirmBeforeStart(docDate, DOC_TYPE_LABEL[docType].toLowerCase())) return;
 
     setSubmitting(true);
     setError(null);
+    const site = sites.find((s) => s.site_id === siteId);
+    const filing = { siteId, poId: poId || null, docNumber, docDate: docDate || null, notes: subject };
+    let newDocId: string | null = null;
 
     try {
-      const siteMeta = sites.find((s) => s.site_id === selectedSiteId);
-      const parsedAmount = parseFloat(amount.replace(/,/g, '')) || 0;
-      let newDocId: string;
+      newDocId = await uploadDocument(file, docType, filing);
+      if (!newDocId) throw new Error('The file could not be uploaded.');
+
       let recordId: string | null = null;
-      let detailsUrl = '';
-      let isUpdate = false;
+      let recordUrl: string | null = null;
       let linkedCount = 0;
+      let warning: string | null = null;
+      const total = toNum(amount);
 
       if (docType === 'pi') {
-        // PROFORMA INVOICE
-        if (detected?.existingRecord && isOverride) {
-          // Replace existing PI
-          newDocId = await replaceDocument(detected.existingRecord.document_id, file, 'pi');
-          const { error: updErr } = await supabase
-            .from('proforma_invoice')
-            .update({
-              document_id: newDocId,
-              amount: parsedAmount || detected.existingRecord.amount,
-              pi_date: docDate || detected.existingRecord.date,
-              subject: subjectOrScope || null,
-              po_id: linkedPoId || null,
-            })
-            .eq('pi_id', detected.existingRecord.id);
-          if (updErr) throw new Error(updErr.message);
-          recordId = detected.existingRecord.id;
-          detailsUrl = `/pi/?id=${detected.existingRecord.id}`;
-          isUpdate = true;
+        if (existing && isOverride) {
+          const patch: Record<string, unknown> = { document_id: newDocId, amount: total, pi_date: docDate };
+          if (subject.trim()) patch.subject = subject.trim();
+          if (poId) patch.po_id = poId;
+          const { error: e } = await supabase.from('proforma_invoice').update(patch).eq('pi_id', existing.id);
+          if (e) throw e;
+          recordId = existing.id;
         } else {
-          // Create new PI
-          newDocId = (await uploadDocument(file, 'pi'))!;
-          const { data: newPi, error: insErr } = await supabase
+          const { data, error: e } = await supabase
             .from('proforma_invoice')
             .insert({
-              site_id: selectedSiteId,
-              po_id: linkedPoId || null,
+              site_id: siteId,
+              po_id: poId || null,
               pi_number: docNumber.trim(),
               pi_date: docDate,
-              amount: parsedAmount,
-              status: 'issued',
-              subject: subjectOrScope || null,
+              amount: total,
+              status: 'sent',
+              subject: subject.trim() || null,
               document_id: newDocId,
             })
             .select('pi_id')
             .single();
-          if (insErr) throw new Error(insErr.message);
-          recordId = newPi.pi_id;
-          detailsUrl = `/pi/?id=${newPi.pi_id}`;
+          if (e) throw e;
+          recordId = data.pi_id;
         }
+        recordUrl = `/pi/?id=${recordId}`;
       } else if (docType === 'po') {
-        // PURCHASE ORDER / WORK ORDER
-        let targetPoId: string;
-        if (detected?.existingRecord && isOverride) {
-          // Replace existing PO / WO
-          newDocId = await replaceDocument(detected.existingRecord.document_id, file, 'po');
-          const { error: updErr } = await supabase
-            .from('purchase_order')
-            .update({
-              document_id: newDocId,
-              total_value_with_gst: parsedAmount || detected.existingRecord.amount,
-              po_date: docDate || detected.existingRecord.date,
-              scope_description: subjectOrScope || null,
-            })
-            .eq('po_id', detected.existingRecord.id);
-          if (updErr) throw new Error(updErr.message);
-          targetPoId = detected.existingRecord.id;
-          detailsUrl = `/po/?id=${detected.existingRecord.id}`;
-          isUpdate = true;
+        if (existing && isOverride) {
+          const patch: Record<string, unknown> = { document_id: newDocId, total_value_with_gst: total, po_date: docDate };
+          if (subject.trim()) patch.scope_description = subject.trim();
+          const { error: e } = await supabase.from('purchase_order').update(patch).eq('po_id', existing.id);
+          if (e) throw e;
+          recordId = existing.id;
         } else {
-          // Create new PO / WO
-          newDocId = (await uploadDocument(file, 'po'))!;
-          const { data: newPo, error: insErr } = await supabase
+          const { data, error: e } = await supabase
             .from('purchase_order')
             .insert({
-              site_id: selectedSiteId,
+              site_id: siteId,
               po_number: docNumber.trim(),
               po_date: docDate,
-              total_value_with_gst: parsedAmount,
-              status: 'released',
-              scope_description: subjectOrScope || null,
+              total_value_with_gst: total,
+              status: 'active',
+              scope_description: subject.trim() || null,
               document_id: newDocId,
             })
             .select('po_id')
             .single();
-          if (insErr) throw new Error(insErr.message);
-          targetPoId = newPo.po_id;
-          detailsUrl = `/po/?id=${newPo.po_id}`;
+          if (e) throw e;
+          recordId = data.po_id;
         }
-
-        recordId = targetPoId;
-        // Link selected Proforma Invoices (PIs) to this Work Order
-        if (targetPoId && selectedPiIds.length > 0) {
-          const { error: linkErr } = await supabase
-            .from('proforma_invoice')
-            .update({ po_id: targetPoId })
-            .in('pi_id', selectedPiIds);
-          if (!linkErr) {
-            linkedCount = selectedPiIds.length;
-          }
+        recordUrl = `/po/?id=${recordId}`;
+        if (selectedPiIds.length > 0) {
+          const { error: e } = await supabase.from('proforma_invoice').update({ po_id: recordId }).in('pi_id', selectedPiIds);
+          if (e) warning = `The work order was saved, but the proforma invoices could not be linked: ${friendlyError(e)}`;
+          else linkedCount = selectedPiIds.length;
         }
       } else if (docType === 'invoice') {
-        // TAX INVOICE
-        if (detected?.existingRecord && isOverride) {
-          newDocId = await replaceDocument(detected.existingRecord.document_id, file, 'invoice');
-          const { error: updErr } = await supabase
-            .from('tax_invoice')
-            .update({
-              document_id: newDocId,
-              gross_invoice_value: parsedAmount || detected.existingRecord.amount,
-              invoice_date: docDate || detected.existingRecord.date,
-            })
-            .eq('invoice_id', detected.existingRecord.id);
-          if (updErr) throw new Error(updErr.message);
-          recordId = detected.existingRecord.id;
-          detailsUrl = `/invoices`;
-          isUpdate = true;
+        const g = Number.isNaN(gstNum) ? 0 : round2(gstNum);
+        if (existing && isOverride) {
+          const patch: Record<string, unknown> = {
+            document_id: newDocId,
+            invoice_date: docDate,
+            taxable_value: round2(taxableNum),
+            gst_amount: g,
+            gross_invoice_value: invoiceTotal,
+          };
+          if (poId) patch.po_id = poId;
+          const { error: e } = await supabase.from('tax_invoice').update(patch).eq('invoice_id', existing.id);
+          if (e) throw e;
+          recordId = existing.id;
         } else {
-          newDocId = (await uploadDocument(file, 'invoice'))!;
-          const { data: newInv, error: insErr } = await supabase
-            .from('tax_invoice')
-            .insert({
-              site_id: selectedSiteId,
-              invoice_number: docNumber.trim(),
-              invoice_date: docDate,
-              gross_invoice_value: parsedAmount,
-              status: 'issued',
-              document_id: newDocId,
-            })
-            .select('invoice_id')
-            .single();
-          if (insErr) throw new Error(insErr.message);
-          recordId = newInv.invoice_id;
-          detailsUrl = `/invoices`;
+          // Same all-or-nothing save the Invoices page uses (also marks the PI as converted).
+          const { data, error: e } = await supabase.rpc('record_tax_invoice', {
+            p_site_id: siteId,
+            p_sub_project_id: null,
+            p_po_id: poId || null,
+            p_pi_id: invoicePiId || null,
+            p_invoice_number: docNumber.trim(),
+            p_invoice_date: docDate,
+            p_taxable: round2(taxableNum),
+            p_gst: g,
+            p_gross: invoiceTotal,
+            p_document_id: newDocId,
+          });
+          if (e) throw e;
+          recordId = data as string;
         }
-      } else {
-        // GENERAL / CHALLAN / PAYMENT ADVICE
-        newDocId = (await uploadDocument(file, docType))!;
-        detailsUrl = `/document/?id=${newDocId}&title=${encodeURIComponent(docNumber)}`;
+        recordUrl = `/site/?id=${siteId}`;
       }
 
-      // Mark this site as active in local state
-      setActiveSiteIds((prev) => new Set(prev).add(selectedSiteId));
+      // Replacing: the record now points at the new file, so the old one can go.
+      if (existing && isOverride && isRecordType && existing.document_id) {
+        await discardDocument(existing.document_id).catch(() => undefined);
+      }
 
-      setSuccessInfo({
+      setActiveSiteIds((prev) => new Set(prev).add(siteId));
+      setSuccess({
         documentId: newDocId,
-        title: docNumber,
-        detailsUrl,
-        siteName: siteMeta ? `${siteMeta.client_name} — ${siteMeta.site_name}` : 'Site',
-        isUpdate,
+        title: docNumber.trim() || file!.name,
+        typeLabel: DOC_TYPE_LABEL[docType],
+        siteId,
+        siteName: site ? `${site.client_name} — ${site.site_name}` : 'Site',
+        recordUrl,
+        isUpdate: !!(existing && isOverride),
         linkedCount,
+        warning,
       });
 
-      // The record keeps its own copy of the file, so the inbox copy used for reading can go.
+      // The document keeps its own copy of the file, so the inbox copy used for reading can go.
       readToken.current++;
       if (inboxIdRef.current) {
         closeInboxItem(inboxIdRef.current, { saved: true, recordType: docType, recordId: recordId ?? newDocId });
         inboxIdRef.current = null;
       }
       setAiState('idle');
-
-      // Clear file
       setFile(null);
       setDetected(null);
     } catch (err) {
-      setError(`Upload & routing failed: ${(err as Error).message}`);
+      // Nothing was saved, so do not leave the uploaded file behind.
+      if (newDocId) await discardDocument(newDocId).catch(() => undefined);
+      setError(friendlyError(err as { message: string; code?: string }));
     }
     setSubmitting(false);
   }
@@ -460,75 +480,86 @@ function UploadPageInner() {
   function handleReset() {
     abandonReading();
     touched.current = new Set();
+    setOverrideChoice(null);
+    setPoReference(null);
     setFile(null);
     setDetected(null);
-    setSuccessInfo(null);
+    setSuccess(null);
     setError(null);
     setDocNumber('');
     setDocDate('');
     setAmount('');
-    setSubjectOrScope('');
-    setLinkedPoId('');
+    setTaxable('');
+    setGst('');
+    setSubject('');
+    setLinkedPoId(null);
     setSelectedPiIds([]);
+    setInvoicePiId('');
   }
 
-  function togglePiSelection(piId: string) {
-    setSelectedPiIds((prev) =>
-      prev.includes(piId) ? prev.filter((id) => id !== piId) : [...prev, piId]
-    );
+  function togglePi(piId: string) {
+    setSelectedPiIds((prev) => (prev.includes(piId) ? prev.filter((id) => id !== piId) : [...prev, piId]));
   }
+
+  const numberLabel = isRecordType ? 'Document number' : 'Document number / title (optional)';
+  const subjectLabel =
+    docType === 'po' ? 'Scope of work' : docType === 'pi' ? 'Subject (what the PI is for)' : 'Notes (optional)';
 
   return (
     <div className="pb-16">
       <PageHeader
-        title="Upload & Route Document"
-        subtitle="Single point of document upload. Drop any PI, PO / Work Order, Tax Invoice, or Challan — the application auto-detects its destination and updates records."
+        title="Upload document"
+        subtitle="Drop any document: PO / work order, proforma invoice, tax invoice, challan, payment advice or anything else. The app reads it, files it under the right site and records it in the right place."
         icon={<UploadCloud />}
       />
 
       {error && <ErrorBanner message={error} />}
 
-      <div className="mx-auto max-w-4xl px-6 py-6 lg:px-8 space-y-6">
-        {/* SUCCESS CARD */}
-        {successInfo && (
+      <div className="mx-auto max-w-4xl space-y-6 px-6 py-6 lg:px-8">
+        {success && (
           <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/40 p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
                 <FileCheck2 size={24} />
               </span>
               <div className="min-w-0 flex-1">
-                <h3 className="text-base font-bold text-slate-900">
-                  {successInfo.isUpdate ? 'Document Updated & Overridden' : 'Document Successfully Routed!'}
-                </h3>
+                <h3 className="text-base font-bold text-slate-900">{success.isUpdate ? 'Document replaced' : 'Document filed'}</h3>
                 <p className="mt-1 text-sm text-slate-600">
-                  <span className="font-semibold text-slate-900">{successInfo.title}</span> has been saved and linked to{' '}
-                  <span className="font-semibold text-slate-900">{successInfo.siteName}</span>.
+                  <span className="font-semibold text-slate-900">{success.title}</span> is filed under{' '}
+                  <span className="font-semibold text-slate-900">{success.siteName}</span> as a {success.typeLabel.toLowerCase()}.
                 </p>
-                {successInfo.linkedCount && successInfo.linkedCount > 0 ? (
+                {success.linkedCount > 0 && (
                   <p className="mt-1 text-xs font-semibold text-emerald-800">
-                    🔗 {successInfo.linkedCount} Proforma Invoice{successInfo.linkedCount > 1 ? 's' : ''} linked to this Work Order!
+                    {success.linkedCount} proforma invoice{success.linkedCount > 1 ? 's' : ''} linked to this work order.
                   </p>
-                ) : null}
+                )}
+                {success.warning && <p className="mt-1 text-xs font-semibold text-amber-800">{success.warning}</p>}
                 <div className="mt-4 flex flex-wrap gap-2.5">
                   <Link
-                    href={`/document/?id=${successInfo.documentId}&title=${encodeURIComponent(successInfo.title)}`}
+                    href={`/document/?id=${success.documentId}&title=${encodeURIComponent(success.title)}`}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700"
                   >
-                    <ExternalLink size={14} /> Open in Document Viewer
+                    <ExternalLink size={14} /> Open document
                   </Link>
-                  {successInfo.detailsUrl && (
+                  {success.recordUrl && (
                     <Link
-                      href={successInfo.detailsUrl}
+                      href={success.recordUrl}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
                     >
-                      View Details Page <ArrowRight size={14} />
+                      Open record <ArrowRight size={14} />
                     </Link>
                   )}
+                  <Link
+                    href={`/documents/?site=${success.siteId}`}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
+                  >
+                    <FolderOpen size={14} /> All documents for this site
+                  </Link>
                   <button
                     onClick={handleReset}
                     className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
                   >
-                    <RefreshCw size={13} /> Upload Another
+                    <RefreshCw size={13} /> Upload another
                   </button>
                 </div>
               </div>
@@ -536,8 +567,7 @@ function UploadPageInner() {
           </div>
         )}
 
-        {/* DRAG AND DROP ZONE */}
-        {!successInfo && (
+        {!success && (
           <div className="card p-6">
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -545,33 +575,30 @@ function UploadPageInner() {
                 e.preventDefault();
                 if (e.dataTransfer.files?.[0]) handleFileSelect(e.dataTransfer.files[0]);
               }}
-              className="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-indigo-200 bg-gradient-to-b from-indigo-50/50 via-white to-slate-50/50 px-6 py-10 text-center transition-all hover:border-indigo-400 hover:bg-indigo-50/80 cursor-pointer"
+              className="relative flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-indigo-200 bg-gradient-to-b from-indigo-50/50 via-white to-slate-50/50 px-6 py-10 text-center transition-all hover:border-indigo-400 hover:bg-indigo-50/80"
             >
               <input
                 type="file"
-                accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx"
+                aria-label="Choose a document to upload"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.doc,.docx"
                 onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
-                className="absolute inset-0 opacity-0 cursor-pointer"
+                className="absolute inset-0 cursor-pointer opacity-0"
               />
               <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-100/80 text-indigo-600 shadow-sm">
                 <UploadCloud size={28} />
               </span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">
-                {file ? file.name : 'Choose a document or drop it here'}
-              </h3>
-              <p className="mt-1 text-xs text-slate-500">
-                PDF, Word (.docx), Excel (.xlsx), or images up to 25 MB
-              </p>
+              <h3 className="mt-3 text-base font-semibold text-slate-900">{file ? file.name : 'Choose a document or drop it here'}</h3>
+              <p className="mt-1 text-xs text-slate-500">PDF, images, Word or Excel, up to 25 MB</p>
               {file && (
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-100/70 px-3 py-1 text-xs font-semibold text-indigo-800">
-                  Selected: {(file.size / (1024 * 1024)).toFixed(2)} MB
+                  {(file.size / (1024 * 1024)).toFixed(2)} MB
                 </div>
               )}
             </div>
 
             {analyzing && (
-              <div className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-indigo-600 animate-pulse">
-                <Sparkles size={16} /> Analyzing document content & detecting destination…
+              <div className="mt-4 flex animate-pulse items-center justify-center gap-2 text-sm font-medium text-indigo-600">
+                <Sparkles size={16} /> Looking at the file…
               </div>
             )}
 
@@ -612,7 +639,7 @@ function UploadPageInner() {
                   {aiState === 'failed' && (
                     <button
                       type="button"
-                      onClick={() => startReading(file, detected)}
+                      onClick={() => startReading(file)}
                       className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-900 hover:underline"
                     >
                       <RefreshCw size={12} /> Read again
@@ -624,44 +651,46 @@ function UploadPageInner() {
           </div>
         )}
 
-        {/* DETECTED DETAILS & REVIEW FORM */}
-        {file && !successInfo && (
+        {file && !success && (
           <Panel
             title={
               <div className="flex items-center gap-2">
-                <span>Destination & Document Details</span>
+                <span>Where it goes</span>
                 {detected && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800">
-                    <Sparkles size={12} /> {aiState === 'done' ? 'Read by AI' : 'Quick guess from file'} ({detected.confidence}{' '}
-                    confidence)
+                    <Sparkles size={12} /> {aiState === 'done' ? 'Read by AI' : 'Quick guess from file'} ({detected.confidence} confidence)
                   </span>
                 )}
               </div>
             }
           >
-            <div className="p-6 space-y-5">
-              {/* REVISION / OVERRIDE WARNING IF RECORD EXISTS */}
-              {detected?.existingRecord && (
+            <div className="space-y-5 p-6">
+              {existing && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-4 text-sm text-amber-900">
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle size={18} className="mt-0.5 flex-none text-amber-700" />
                     <div className="flex-1">
                       <p className="font-semibold text-amber-950">
-                        Existing {detected.existingRecord.table.replace(/_/g, ' ').toUpperCase()} found in system:
+                        This site already has {DOC_TYPE_LABEL[docType].toLowerCase()} {existing.number}
                       </p>
                       <p className="mt-0.5 text-xs text-amber-800">
-                        No. <span className="font-mono font-bold">{detected.existingRecord.number}</span> | Date:{' '}
-                        {detected.existingRecord.date} | Amount: {formatINR(detected.existingRecord.amount)}
+                        Dated {existing.date} · {formatINR(existing.amount)}
                       </p>
-                      <label className="mt-3 flex items-center gap-2 cursor-pointer font-medium text-xs text-amber-950">
+                      <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs font-medium text-amber-950">
                         <input
                           type="checkbox"
                           checked={isOverride}
-                          onChange={(e) => { markTouched('override'); setIsOverride(e.target.checked); }}
+                          onChange={(e) => setOverrideChoice(e.target.checked)}
                           className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
                         />
-                        Replace / Overwrite previous version (deletes old draft file from storage and updates SOA)
+                        Replace it with this copy (updates its date and amount and swaps the attached file)
                       </label>
+                      {!isOverride && (
+                        <p className="mt-1.5 text-xs text-amber-800">
+                          This will be saved as a separate record with the same number. Untick only if it really is a different
+                          document.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -669,21 +698,20 @@ function UploadPageInner() {
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <FieldSelect
-                  label="Document Category"
+                  label="Kind of document"
                   value={docType}
-                  onChange={(v) => { markTouched('docType'); setDocType(v as UploadDocType); }}
-                  options={[
-                    { value: 'pi', label: 'Proforma Invoice (PI)' },
-                    { value: 'po', label: 'Purchase Order / Work Order (PO/WO)' },
-                    { value: 'invoice', label: 'Tax Invoice' },
-                    { value: 'other', label: 'Delivery Challan / Handover' },
-                    { value: 'payment_advice', label: 'Payment Advice / Receipt' },
-                  ]}
+                  onChange={(v) => {
+                    markTouched('docType');
+                    setDocType((v || 'other') as UploadDocType);
+                  }}
+                  options={DOC_TYPES.map((t) => ({ value: t, label: DOC_TYPE_LABEL[t] }))}
                 />
 
                 <div>
                   <div className="flex items-center justify-between">
-                    <label className="block text-xs font-medium text-slate-600">Client — Site</label>
+                    <label htmlFor="upload-site" className="block text-xs font-medium text-slate-600">
+                      Client — Site
+                    </label>
                     <button
                       type="button"
                       onClick={() => setShowAllSites(!showAllSites)}
@@ -693,75 +721,126 @@ function UploadPageInner() {
                     </button>
                   </div>
                   <select
-                    value={selectedSiteId}
-                    onChange={(e) => { markTouched('site'); setSelectedSiteId(e.target.value); }}
+                    id="upload-site"
+                    value={siteId}
+                    onChange={(e) => {
+                      markTouched('site');
+                      chooseSite(e.target.value);
+                    }}
                     className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                   >
                     <option value="">Select site…</option>
                     {filteredSites.map((s) => (
                       <option key={s.site_id} value={s.site_id}>
-                        {s.client_name} — {s.site_name} {!activeSiteIds.has(s.site_id) ? '(New site)' : ''}
+                        {s.client_name} — {s.site_name} {!activeSiteIds.has(s.site_id) ? '(new site)' : ''}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <FieldInput
-                  label="Document Number"
+                  label={numberLabel}
                   value={docNumber}
-                  onChange={(v) => { markTouched('docNumber'); setDocNumber(v); }}
-                  placeholder="e.g. S5/PI/2026/042 or WO-CHSSPL-007"
+                  onChange={(v) => {
+                    markTouched('docNumber');
+                    setDocNumber(v);
+                  }}
+                  placeholder={docType === 'challan' ? 'e.g. DC-118' : 'e.g. S5/PI/2026/042 or WO-CHSSPL-007'}
                 />
 
                 <FieldInput
-                  label="Document Date"
+                  label={isRecordType ? 'Document date' : 'Document date (optional)'}
                   type="date"
                   value={docDate}
-                  onChange={(v) => { markTouched('docDate'); setDocDate(v); }}
+                  onChange={(v) => {
+                    markTouched('docDate');
+                    setDocDate(v);
+                  }}
                 />
 
-                <FieldInput
-                  label="Total Value / Amount (INR with GST)"
-                  value={amount}
-                  onChange={(v) => { markTouched('amount'); setAmount(v); }}
-                  placeholder="e.g. 145000"
-                />
+                {(docType === 'po' || docType === 'pi') && (
+                  <FieldInput
+                    label="Total amount (with GST)"
+                    value={amount}
+                    onChange={(v) => {
+                      markTouched('amount');
+                      setAmount(v);
+                    }}
+                    placeholder="e.g. 145000"
+                  />
+                )}
 
-                <FieldInput
-                  label="Scope of Work / Subject / Remarks"
-                  value={subjectOrScope}
-                  onChange={(v) => { markTouched('subject'); setSubjectOrScope(v); }}
-                  placeholder="e.g. Tile Work on Lily Pond"
-                />
-
-                {/* If PI: allow linking to existing Work Order */}
-                {docType === 'pi' && sitePos.length > 0 && (
-                  <div className="sm:col-span-2">
-                    <FieldSelect
-                      label="Link to Work Order / PO (optional)"
-                      value={linkedPoId}
-                      onChange={(v) => { markTouched('linkedPo'); setLinkedPoId(v); }}
-                      options={sitePos.map((p) => ({ value: p.po_id, label: `PO/WO ${p.po_number}` }))}
+                {docType === 'invoice' && (
+                  <>
+                    <FieldInput
+                      label="Taxable value (before GST)"
+                      value={taxable}
+                      onChange={(v) => {
+                        markTouched('taxable');
+                        setTaxable(v);
+                      }}
+                      placeholder="e.g. 100000"
                     />
-                  </div>
+                    <FieldInput
+                      label="GST amount"
+                      value={gst}
+                      onChange={(v) => {
+                        markTouched('gst');
+                        setGst(v);
+                      }}
+                      placeholder="e.g. 18000"
+                    />
+                    <div className="flex items-end pb-2 text-sm text-slate-600">
+                      Invoice total: <span className="ml-1.5 font-mono font-semibold text-slate-900">{formatINR(invoiceTotal)}</span>
+                    </div>
+                  </>
+                )}
+
+                <FieldInput
+                  label={subjectLabel}
+                  value={subject}
+                  onChange={(v) => {
+                    markTouched('subject');
+                    setSubject(v);
+                  }}
+                  placeholder={docType === 'challan' ? 'e.g. 40 boxes of tiles delivered to Tower B' : 'e.g. Tile work on Lily Pond'}
+                  full={docType !== 'po' && docType !== 'pi'}
+                />
+
+                {docType !== 'po' && sitePos.length > 0 && (
+                  <FieldSelect
+                    label="Work order / PO it belongs to (optional)"
+                    value={poId}
+                    onChange={(v) => {
+                      markTouched('linkedPo');
+                      setLinkedPoId(v);
+                    }}
+                    options={sitePos.map((p) => ({ value: p.po_id, label: `PO/WO ${p.po_number}` }))}
+                  />
+                )}
+
+                {docType === 'invoice' && !(existing && isOverride) && openPis.length > 0 && (
+                  <FieldSelect
+                    label="Raised against proforma invoice (optional)"
+                    value={invoicePiId}
+                    onChange={setInvoicePiId}
+                    options={openPis.map((p) => ({ value: p.pi_id, label: `PI ${p.pi_number} · ${formatINR(p.amount)}` }))}
+                  />
                 )}
               </div>
 
-              {/* If PO/WO: allow linking to existing PIs on that site */}
-              {docType === 'po' && sitePis.length > 0 && (
+              {docType === 'po' && unlinkedPis.length > 0 && (
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
                   <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
                     <Link2 size={15} className="text-indigo-600" />
-                    <span>Link Proforma Invoices (PIs) to this Work Order</span>
+                    <span>Link proforma invoices to this work order (optional)</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Select any PIs on this site covered by this Work Order to update their status and link them automatically:
-                  </p>
-                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
-                    {sitePis.map((p) => (
+                  <p className="mt-1 text-xs text-slate-500">Tick the PIs on this site that this work order covers.</p>
+                  <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+                    {unlinkedPis.map((p) => (
                       <label
                         key={p.pi_id}
-                        className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs cursor-pointer transition-colors ${
+                        className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-xs transition-colors ${
                           selectedPiIds.includes(p.pi_id)
                             ? 'border-indigo-300 bg-white font-medium text-indigo-950 shadow-2xs'
                             : 'border-slate-200 bg-white/70 text-slate-700 hover:bg-white'
@@ -771,11 +850,11 @@ function UploadPageInner() {
                           <input
                             type="checkbox"
                             checked={selectedPiIds.includes(p.pi_id)}
-                            onChange={() => togglePiSelection(p.pi_id)}
+                            onChange={() => togglePi(p.pi_id)}
                             className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                           />
                           <span className="font-mono font-semibold">{p.pi_number}</span>
-                          {p.subject && <span className="text-slate-500 truncate max-w-xs">· {p.subject}</span>}
+                          {p.subject && <span className="max-w-xs truncate text-slate-500">· {p.subject}</span>}
                         </div>
                         <span className="font-mono font-bold text-slate-900">{formatINR(p.amount)}</span>
                       </label>
@@ -784,16 +863,19 @@ function UploadPageInner() {
                 </div>
               )}
 
+              {!isRecordType && (
+                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                  This is filed under the site{poId ? ' and work order' : ''} and appears in its documents list. It does not change
+                  any amounts.{docType === 'payment_advice' ? ' To record the money received, use the Payments page.' : ''}
+                </p>
+              )}
+
               <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
                 <GhostButton onClick={handleReset} disabled={submitting}>
                   Cancel
                 </GhostButton>
                 <PrimaryButton onClick={handleSubmit} disabled={submitting}>
-                  {submitting
-                    ? 'Routing Document…'
-                    : isOverride && detected?.existingRecord
-                    ? 'Confirm & Override'
-                    : 'Confirm & Save Document'}
+                  {submitting ? 'Saving…' : isOverride ? 'Replace and save' : 'Save and file'}
                 </PrimaryButton>
               </div>
             </div>

@@ -8,7 +8,8 @@ import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
 import { friendlyError } from '@/lib/plain';
 import { formatINR, formatDate } from '@/lib/format';
-import { FileSpreadsheet, ArrowLeft, Pencil, UploadCloud } from 'lucide-react';
+import { FileSpreadsheet, ArrowLeft, Pencil, UploadCloud, FolderOpen } from 'lucide-react';
+import { DocumentList } from '@/components/DocumentList';
 import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
 import { WORDS, HELP } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
@@ -39,6 +40,7 @@ function SitePageInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<{ kind: EditKind; id: string } | null>(null);
+  const [docsKey, setDocsKey] = useState(0);
 
   useEffect(() => { load(); }, [id]);
 
@@ -103,8 +105,11 @@ function SitePageInner() {
       <PageHeader
         actions={
           <div className="flex items-center gap-2">
+            <a href="#documents" className={buttonClass}>
+              <FolderOpen size={15} /> Documents
+            </a>
             <Link
-              href="/upload"
+              href={`/upload/?site=${id}`}
               className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"
             >
               <UploadCloud size={15} /> Upload document
@@ -173,6 +178,16 @@ function SitePageInner() {
                 </Panel>
               );
             })()}
+
+            {/* EVERY FILE FOR THIS SITE: POs, PIs, invoices, payments, challans, letters… */}
+            <div id="documents" className="scroll-mt-6">
+              <Panel
+                title={<span className="inline-flex items-center gap-2"><FolderOpen size={15} className="text-indigo-600" /> Documents</span>}
+                action={<Link href={`/upload/?site=${id}`} className="text-xs font-medium text-indigo-600 hover:underline">Upload a document</Link>}
+              >
+                <DocumentList key={docsKey} siteId={id} />
+              </Panel>
+            </div>
           </>
         )}
       </div>
@@ -182,7 +197,7 @@ function SitePageInner() {
           kind={editing.kind}
           id={editing.id}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); load(); }}
+          onSaved={() => { setEditing(null); setDocsKey((k) => k + 1); load(); }}
         />
       )}
     </div>

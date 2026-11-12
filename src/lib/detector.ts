@@ -20,15 +20,23 @@ export interface DetectedDocument {
   date: string;
   amount: number | null;
   subjectOrScope: string;
+  /** Only known after the AI reading: value before GST and the GST on it (tax invoices). */
+  taxable: number | null;
+  gst: number | null;
+  /** The client's PO / work order number quoted on the document, if the AI read one. */
+  poReference: string | null;
   confidence: 'high' | 'medium' | 'low';
-  existingRecord: {
-    id: string;
-    table: 'proforma_invoice' | 'purchase_order' | 'tax_invoice';
-    number: string;
-    date: string;
-    amount: number;
-    document_id: string | null;
-  } | null;
+}
+
+export interface ExistingRecord {
+  id: string;
+  table: 'proforma_invoice' | 'purchase_order' | 'tax_invoice';
+  number: string;
+  date: string;
+  amount: number;
+  taxable: number | null;
+  gst: number | null;
+  document_id: string | null;
 }
 
 /**
@@ -59,8 +67,8 @@ export async function extractTextPreview(file: File, maxBytes = 120000): Promise
 
 /**
  * Smart document detector: Inspects file name and extracted text,
- * identifies type, client/site, document number, date, amount,
- * and checks Supabase for existing revisions.
+ * identifies type, client/site, document number, date and amount.
+ * A quick guess only; the AI reading (fromExtracted) replaces it when it comes back.
  */
 export async function detectDocument(
   file: File,
@@ -72,7 +80,7 @@ export async function detectDocument(
   const cleanName = fileName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9\-\/]+/g, ' ');
 
   // 1. Detect Document Type
-  let docType: UploadDocType = 'other' as unknown as UploadDocType;
+  let docType: UploadDocType = 'other';
   let docTypeName = 'General Document';
 
   if (/\b(?:pi|proforma|performa)\b/i.test(cleanName) || /\b(?:proforma\s*invoice)\b/i.test(fileText)) {
@@ -96,9 +104,12 @@ export async function detectDocument(
   ) {
     docType = 'payment_advice';
     docTypeName = 'Payment Advice / Receipt';
-  } else if (/\b(?:challan|delivery|handover)\b/i.test(cleanName)) {
-    docType = 'other' as unknown as UploadDocType;
-    docTypeName = 'Delivery Challan / Handover';
+  } else if (/\b(?:challan|dc|delivery)\b/i.test(cleanName) || /\bdelivery\s*challan\b/i.test(fileText)) {
+    docType = 'challan';
+    docTypeName = 'Delivery Challan';
+  } else if (/\b(?:tds|16a)\b/i.test(cleanName)) {
+    docType = 'tds_certificate';
+    docTypeName = 'TDS Certificate';
   }
 
   // 2. Match Client and Site
@@ -151,16 +162,14 @@ export async function detectDocument(
     combined.match(/\b(\d{2})[-/.](\d{2})[-/.](\d{4})\b/);
 
   if (dateMatch) {
-    if (dateMatch[1] && dateMatch[1].includes('-')) {
+    if (dateMatch[1] && dateMatch[1].length === 10) {
       date = dateMatch[1].replace(/_/g, '-');
     } else if (dateMatch[2] && dateMatch[3]) {
       // DD-MM-YYYY -> YYYY-MM-DD
       date = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
     }
   }
-  if (!date) {
-    date = new Date().toISOString().split('T')[0];
-  }
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) date = '';
 
   // 5. Extract Amount
   let amount: number | null = null;
@@ -186,9 +195,6 @@ export async function detectDocument(
     }
   }
 
-  // 7. Check Supabase for existing record / revision
-  const existingRecord = await findExistingRecord(docType, docNumber);
-
   const confidence: 'high' | 'medium' | 'low' =
     matchedSite && docNumber ? 'high' : matchedSite || docNumber ? 'medium' : 'low';
 
@@ -203,70 +209,66 @@ export async function detectDocument(
     date,
     amount,
     subjectOrScope,
+    taxable: null,
+    gst: null,
+    poReference: null,
     confidence,
-    existingRecord,
   };
 }
 
-/** Looks up a PI / PO / tax invoice with this number, so a new copy can replace the old one. */
+/** Looks up a PI / PO / tax invoice with this number on this site, so a new copy can replace the old one. */
 export async function findExistingRecord(
   docType: UploadDocType,
-  docNumber: string
-): Promise<DetectedDocument['existingRecord']> {
-  let existingRecord: DetectedDocument['existingRecord'] = null;
-
-  if (docNumber) {
-    if (docType === 'pi') {
-      const { data } = await supabase
-        .from('proforma_invoice')
-        .select('pi_id, pi_number, pi_date, amount, document_id')
-        .eq('pi_number', docNumber)
-        .maybeSingle();
-      if (data) {
-        existingRecord = {
-          id: data.pi_id,
-          table: 'proforma_invoice',
-          number: data.pi_number,
-          date: data.pi_date,
-          amount: Number(data.amount),
-          document_id: data.document_id,
-        };
-      }
-    } else if (docType === 'po') {
-      const { data } = await supabase
-        .from('purchase_order')
-        .select('po_id, po_number, po_date, total_value_with_gst, document_id')
-        .eq('po_number', docNumber)
-        .maybeSingle();
-      if (data) {
-        existingRecord = {
-          id: data.po_id,
-          table: 'purchase_order',
-          number: data.po_number,
-          date: data.po_date,
-          amount: Number(data.total_value_with_gst),
-          document_id: data.document_id,
-        };
-      }
-    } else if (docType === 'invoice') {
-      const { data } = await supabase
-        .from('tax_invoice')
-        .select('invoice_id, invoice_number, invoice_date, gross_invoice_value, document_id')
-        .eq('invoice_number', docNumber)
-        .maybeSingle();
-      if (data) {
-        existingRecord = {
+  docNumber: string,
+  siteId: string
+): Promise<ExistingRecord | null> {
+  const num = docNumber.trim();
+  if (!num || !siteId) return null;
+  if (docType === 'pi') {
+    const { data } = await supabase
+      .from('proforma_invoice')
+      .select('pi_id, pi_number, pi_date, amount, document_id')
+      .eq('site_id', siteId)
+      .eq('pi_number', num)
+      .limit(1)
+      .maybeSingle();
+    return data
+      ? { id: data.pi_id, table: 'proforma_invoice', number: data.pi_number, date: data.pi_date, amount: Number(data.amount), taxable: null, gst: null, document_id: data.document_id }
+      : null;
+  }
+  if (docType === 'po') {
+    const { data } = await supabase
+      .from('purchase_order')
+      .select('po_id, po_number, po_date, total_value_with_gst, document_id')
+      .eq('site_id', siteId)
+      .eq('po_number', num)
+      .limit(1)
+      .maybeSingle();
+    return data
+      ? { id: data.po_id, table: 'purchase_order', number: data.po_number, date: data.po_date, amount: Number(data.total_value_with_gst), taxable: null, gst: null, document_id: data.document_id }
+      : null;
+  }
+  if (docType === 'invoice') {
+    const { data } = await supabase
+      .from('tax_invoice')
+      .select('invoice_id, invoice_number, invoice_date, taxable_value, gst_amount, gross_invoice_value, document_id')
+      .eq('site_id', siteId)
+      .eq('invoice_number', num)
+      .maybeSingle();
+    return data
+      ? {
           id: data.invoice_id,
           table: 'tax_invoice',
           number: data.invoice_number,
           date: data.invoice_date,
           amount: Number(data.gross_invoice_value),
+          taxable: data.taxable_value == null ? null : Number(data.taxable_value),
+          gst: data.gst_amount == null ? null : Number(data.gst_amount),
           document_id: data.document_id,
-        };
-      }
-    }
+        }
+      : null;
   }
-  return existingRecord;
+  return null;
 }
 
 const DOC_TYPE_FROM_AI: Record<Extracted['document_type'], { docType: UploadDocType; name: string }> = {
@@ -303,13 +305,15 @@ function matchSiteFromRead(ex: Extracted, knownSites: SiteMeta[]): SiteMeta | nu
 }
 
 /** Turns what the backend read into the same shape the quick file-name guess produces. */
-export async function fromExtracted(ex: Extracted, knownSites: SiteMeta[]): Promise<DetectedDocument> {
+export function fromExtracted(ex: Extracted, knownSites: SiteMeta[]): DetectedDocument {
   const kind = DOC_TYPE_FROM_AI[ex.document_type] ?? DOC_TYPE_FROM_AI.other;
   const site = matchSiteFromRead(ex, knownSites);
   const docNumber = (ex.document_number ?? '').trim();
   const isDate = (d: string | null) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
   const date = isDate(ex.document_date) ? ex.document_date! : isDate(ex.payment_date) ? ex.payment_date! : '';
   const amount = ex.total_amount ?? ex.payment_amount ?? null;
+  const gstParts = [ex.igst_amount, ex.cgst_amount, ex.sgst_amount].filter((v): v is number => typeof v === 'number');
+  const gst = ex.gst_type === 'none' ? 0 : gstParts.length ? gstParts.reduce((a, b) => a + b, 0) : null;
   return {
     docType: kind.docType,
     docTypeName: kind.name,
@@ -321,7 +325,9 @@ export async function fromExtracted(ex: Extracted, knownSites: SiteMeta[]): Prom
     date,
     amount,
     subjectOrScope: (ex.scope_description ?? '').trim(),
+    taxable: ex.taxable_value ?? null,
+    gst,
+    poReference: ex.po_reference?.trim() || null,
     confidence: ex.overall_confidence,
-    existingRecord: await findExistingRecord(kind.docType, docNumber),
   };
 }

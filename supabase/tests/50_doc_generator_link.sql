@@ -52,6 +52,10 @@ begin
   assert rec.site_id = '51111111-0000-0000-0000-000000000001' and rec.doc_number = '26-27/41'
      and rec.linked_type = 'proforma_invoice' and rec.document_type = 'pi', format('filing %s', to_jsonb(rec));
   assert (select document_id from public.proforma_invoice where pi_id = v_pi) = v_doc, 'PI points at its file';
+  begin
+    perform public.attach_generated_file('docgen:pi:26-27/41', 'other-app/secret.pdf', 'x.pdf');
+    assert false, 'a path outside pi/ or invoice/ accepted';
+  exception when invalid_parameter_value then null; end;
 
   -- tax invoice made from that PI, rounded to the rupee
   r := public.link_generated_document(jsonb_build_object(
@@ -132,5 +136,98 @@ reset role;
 set local role authenticated;
 do $$ begin
   assert (select count(*) from public.proforma_invoice where source_ref = 'docgen:pi:26-27/44') = 1, 'staff see the linked PI';
+end $$;
+reset role;
+
+-- 5. Money-safety refusals and retries (review).
+set local role service_role;
+do $$
+declare r jsonb; v_inv uuid; v_pi uuid;
+begin
+  -- invoice retry returns the existing record
+  r := public.link_generated_document(jsonb_build_object('kind','invoice','source_ref','docgen:invoice:S51/26-27/020',
+    'site_id','51111111-0000-0000-0000-000000000001','number','S51/26-27/020','date','2026-10-25',
+    'taxable',1000,'gst',180,'gst_type','cgst_sgst','gst_rate',18,'round_off',0,'gross',1180));
+  v_inv := (r->>'record_id')::uuid;
+  r := public.link_generated_document(jsonb_build_object('kind','invoice','source_ref','docgen:invoice:S51/26-27/020',
+    'site_id','51111111-0000-0000-0000-000000000001','number','S51/26-27/020','date','2026-10-25',
+    'taxable',1000,'gst',180,'gst_type','cgst_sgst','gst_rate',18,'round_off',0,'gross',1180));
+  assert (r->>'record_id')::uuid = v_inv and (r->>'existing')::boolean, 'invoice retry must not duplicate';
+
+  -- dated before the tracker starts (hidden from staff) → refused
+  begin
+    perform public.link_generated_document(jsonb_build_object('kind','pi','source_ref','docgen:pi:26-27/50',
+      'site_id','51111111-0000-0000-0000-000000000001','number','26-27/50','date','2026-07-15','amount',100));
+    assert false, 'pre-start date accepted';
+  exception when invalid_parameter_value then null; end;
+
+  -- unknown ref for a file
+  begin
+    perform public.attach_generated_file('docgen:pi:nothing', 'pi/x.docx', 'x.docx');
+    assert false, 'attach to unknown ref accepted';
+  exception when no_data_found then null; end;
+end $$;
+reset role;
+
+-- an invoice with a payment matched cannot be cancelled
+insert into public.payment (payment_id, site_id, payment_date, amount_received, utr_or_reference)
+values ('b1111111-0000-0000-0000-0000000000d1', '51111111-0000-0000-0000-000000000001', '2026-10-30', 500, 'UTR-DG');
+insert into public.payment_allocation (payment_id, invoice_id, amount_allocated)
+select 'b1111111-0000-0000-0000-0000000000d1', invoice_id, 500 from public.tax_invoice where source_ref = 'docgen:invoice:S51/26-27/020';
+set local role service_role;
+do $$ begin
+  begin
+    perform public.cancel_generated_document('docgen:invoice:S51/26-27/020', 'x');
+    assert false, 'paid invoice cancelled';
+  exception when invalid_parameter_value then null; end;
+end $$;
+reset role;
+
+-- an invoice already in Tally cannot be cancelled (fn_tally_lock)
+set local role service_role;
+select public.link_generated_document(jsonb_build_object('kind','invoice','source_ref','docgen:invoice:S51/26-27/021',
+  'site_id','51111111-0000-0000-0000-000000000001','number','S51/26-27/021','date','2026-10-26',
+  'taxable',100,'gst',18,'gst_type','cgst_sgst','gst_rate',18,'round_off',0,'gross',118));
+reset role;
+insert into public.tally_sync_log (record_type, record_id, tally_voucher_type, sync_status)
+select 'invoice', invoice_id, 'Sales', 'pushed' from public.tax_invoice where source_ref = 'docgen:invoice:S51/26-27/021';
+set local role service_role;
+do $$ begin
+  begin
+    perform public.cancel_generated_document('docgen:invoice:S51/26-27/021', 'x');
+    assert false, 'invoice in Tally cancelled';
+  exception when raise_exception then null; end;
+  assert (select status from public.tax_invoice where source_ref = 'docgen:invoice:S51/26-27/021') = 'issued', 'still issued';
+end $$;
+reset role;
+
+-- a PI linked to a PO cannot be cancelled; a cancelled PI cannot be invoiced (either way in)
+set local role service_role;
+select public.link_generated_document(jsonb_build_object('kind','pi','source_ref','docgen:pi:26-27/51',
+  'site_id','51111111-0000-0000-0000-000000000001','number','26-27/51','date','2026-10-07','amount',300));
+select public.link_generated_document(jsonb_build_object('kind','pi','source_ref','docgen:pi:26-27/52',
+  'site_id','51111111-0000-0000-0000-000000000001','number','26-27/52','date','2026-10-07','amount',400));
+select public.cancel_generated_document('docgen:pi:26-27/52', 'dropped');
+reset role;
+update public.proforma_invoice set po_id = 'a1111111-0000-0000-0000-00000000000a' where source_ref = 'docgen:pi:26-27/51';
+set local role service_role;
+do $$
+declare v_cancelled uuid := (select pi_id from public.proforma_invoice where source_ref = 'docgen:pi:26-27/52');
+begin
+  begin
+    perform public.cancel_generated_document('docgen:pi:26-27/51', 'x');
+    assert false, 'PI linked to a PO cancelled';
+  exception when invalid_parameter_value then null; end;
+  begin
+    perform public.link_generated_document(jsonb_build_object('kind','invoice','source_ref','docgen:invoice:S51/26-27/022',
+      'site_id','51111111-0000-0000-0000-000000000001','number','S51/26-27/022','date','2026-10-27',
+      'taxable',100,'gst',18,'gross',118,'pi_id',v_cancelled));
+    assert false, 'cancelled PI invoiced via the doc generator';
+  exception when invalid_parameter_value then null; end;
+  begin
+    perform public.record_tax_invoice('51111111-0000-0000-0000-000000000001', null, null, v_cancelled,
+      'MAN-1', '2026-10-27', 100, 18, 118, null);
+    assert false, 'cancelled PI invoiced via record_tax_invoice';
+  exception when raise_exception then null; end;
 end $$;
 reset role;

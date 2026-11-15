@@ -22,6 +22,7 @@
 --       link_generated_document(jsonb)   create the PI / tax invoice (and convert a PI)
 --       attach_generated_file(...)       file the Word/PDF against it
 --       cancel_generated_document(...)   void → PI cancelled / invoice cancelled
+--  6. record_tax_invoice (the tracker's own save) refuses a cancelled PI.
 --
 -- HOW TO RUN  Paste into the SQL editor of studio5-portal and run once. Safe to run again.
 --             Run after migration_016.
@@ -32,6 +33,7 @@
 --   alter table public.tax_invoice add constraint chk_inv_gst_adds_up check (gst_amount is null or abs(taxable_value + gst_amount - gross_invoice_value) <= 0.05);
 --   alter table public.tax_invoice drop column round_off, drop column source_ref;
 --   alter table public.proforma_invoice drop column source_ref;
+--   re-run section 1 of migration_007.sql (record_tax_invoice), then: alter function public.record_tax_invoice(uuid,uuid,uuid,uuid,text,date,numeric,numeric,numeric,uuid) set search_path = public;
 --   delete from public.tally_setting where key = 'round_off_ledger';
 --   (an enum value cannot be removed; an unused 'cancelled' is harmless)
 -- ============================================================================
@@ -80,6 +82,10 @@ begin
   if v_site is null or not exists (select 1 from site where site_id = v_site) then
     raise exception 'That site is not in the PO tracker (it may have been removed). Pick the site again.' using errcode = '22023';
   end if;
+  -- Records dated before the tracker's start are hidden from everyone (migration_011): refuse instead.
+  if (p->>'date')::date < public.reporting_start() then
+    raise exception 'Dated before %, when the PO tracker starts, so it is not added there.', to_char(public.reporting_start(), 'DD Mon YYYY') using errcode = '22023';
+  end if;
 
   if v_kind = 'pi' then
     select pi_id into v_id from proforma_invoice where source_ref = v_ref;
@@ -87,10 +93,17 @@ begin
     if exists (select 1 from proforma_invoice where site_id = v_site and lower(btrim(pi_number)) = lower(btrim(p->>'number'))) then
       raise exception 'PI % is already in the PO tracker for this site (entered by hand). Attach the file to it there.', p->>'number' using errcode = '23505';
     end if;
-    insert into proforma_invoice (site_id, pi_number, pi_date, amount, submitted_date, subject, remarks, status, source_ref)
-    values (v_site, btrim(p->>'number'), (p->>'date')::date, (p->>'amount')::numeric, (p->>'date')::date,
-            nullif(btrim(coalesce(p->>'subject', '')), ''), 'Made in the doc generator', 'sent', v_ref)
-    returning pi_id into v_id;
+    begin
+      insert into proforma_invoice (site_id, pi_number, pi_date, amount, submitted_date, subject, remarks, status, source_ref)
+      values (v_site, btrim(p->>'number'), (p->>'date')::date, (p->>'amount')::numeric, (p->>'date')::date,
+              nullif(btrim(coalesce(p->>'subject', '')), ''), 'Made in the doc generator', 'sent', v_ref)
+      returning pi_id into v_id;
+    exception when unique_violation then
+      -- the same document sent twice at once: the other call created it
+      select pi_id into v_id from proforma_invoice where source_ref = v_ref;
+      if v_id is null then raise; end if;
+      return jsonb_build_object('record_type', 'proforma_invoice', 'record_id', v_id, 'existing', true);
+    end;
     return jsonb_build_object('record_type', 'proforma_invoice', 'record_id', v_id, 'existing', false);
   end if;
 
@@ -107,12 +120,18 @@ begin
       raise exception 'That proforma invoice is already % in the PO tracker.', replace(v_pi_status::text, '_', ' ') using errcode = '22023';
     end if;
   end if;
-  insert into tax_invoice (site_id, pi_id, po_id, invoice_number, invoice_date, taxable_value, gst_type, gst_amount,
-                           gst_rate_pct, round_off, gross_invoice_value, status, source_ref)
-  values (v_site, v_pi, (select po_id from proforma_invoice where pi_id = v_pi), btrim(p->>'number'), (p->>'date')::date,
-          (p->>'taxable')::numeric, nullif(p->>'gst_type', '')::gst_type, (p->>'gst')::numeric,
-          (p->>'gst_rate')::numeric, coalesce((p->>'round_off')::numeric, 0), (p->>'gross')::numeric, 'issued', v_ref)
-  returning invoice_id into v_id;
+  begin
+    insert into tax_invoice (site_id, pi_id, po_id, invoice_number, invoice_date, taxable_value, gst_type, gst_amount,
+                             gst_rate_pct, round_off, gross_invoice_value, status, source_ref)
+    values (v_site, v_pi, (select po_id from proforma_invoice where pi_id = v_pi), btrim(p->>'number'), (p->>'date')::date,
+            (p->>'taxable')::numeric, nullif(p->>'gst_type', '')::gst_type, (p->>'gst')::numeric,
+            (p->>'gst_rate')::numeric, coalesce((p->>'round_off')::numeric, 0), (p->>'gross')::numeric, 'issued', v_ref)
+    returning invoice_id into v_id;
+  exception when unique_violation then
+    select invoice_id into v_id from tax_invoice where source_ref = v_ref;
+    if v_id is null then raise; end if;
+    return jsonb_build_object('record_type', 'tax_invoice', 'record_id', v_id, 'existing', true);
+  end;
   if v_pi is not null then
     update proforma_invoice set status = 'converted_to_invoice', converted_invoice_id = v_id where pi_id = v_pi;
   end if;
@@ -129,6 +148,7 @@ begin
   select pi_id, site_id into v_pi, v_site from proforma_invoice where source_ref = p_source_ref;
   if v_pi is null then select invoice_id, site_id into v_inv, v_site from tax_invoice where source_ref = p_source_ref; end if;
   if v_site is null then raise exception 'No doc generator record % in the PO tracker yet.', p_source_ref using errcode = 'P0002'; end if;
+  if p_file_url !~ '^(pi|invoice)/[^/]+$' then raise exception 'Not a doc generator file path.' using errcode = '22023'; end if;
   -- the same file sent twice (a retry) is filed once
   select document_id into v_doc from document where file_url = p_file_url;
   if v_doc is null then
@@ -172,6 +192,35 @@ begin
   end if;
   update tax_invoice set status = 'cancelled' where invoice_id = r_inv.invoice_id; -- the Tally lock refuses this if it is in Tally
   return 'cancelled';
+end $$;
+
+-- 6. The tracker's own invoice save (migration_007) must not convert a cancelled PI either.
+create or replace function public.record_tax_invoice(
+    p_site_id uuid, p_sub_project_id uuid, p_po_id uuid, p_pi_id uuid,
+    p_invoice_number text, p_invoice_date date,
+    p_taxable numeric, p_gst numeric, p_gross numeric, p_document_id uuid
+) returns uuid
+language plpgsql set search_path = public as $$
+declare v_id uuid; v_pi_site uuid;
+begin
+  if p_pi_id is not null then
+    select site_id into v_pi_site from proforma_invoice where pi_id = p_pi_id;
+    if v_pi_site is null then raise exception 'That proforma invoice does not exist.'; end if;
+    if v_pi_site <> p_site_id then raise exception 'That proforma invoice belongs to a different site.'; end if;
+  end if;
+
+  insert into tax_invoice(site_id, sub_project_id, po_id, pi_id, invoice_number, invoice_date,
+                          taxable_value, gst_amount, gross_invoice_value, document_id, status)
+  values (p_site_id, p_sub_project_id, p_po_id, p_pi_id, trim(p_invoice_number), p_invoice_date,
+          p_taxable, p_gst, p_gross, p_document_id, 'issued')
+  returning invoice_id into v_id;
+
+  if p_pi_id is not null then
+    update proforma_invoice set status = 'converted_to_invoice', converted_invoice_id = v_id
+    where pi_id = p_pi_id and status not in ('converted_to_invoice', 'cancelled');
+    if not found then raise exception 'That proforma invoice has already been converted to a tax invoice, or was cancelled.'; end if;
+  end if;
+  return v_id;
 end $$;
 
 -- Only the doc generator's server (service-role key) may call these.

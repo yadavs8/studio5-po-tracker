@@ -61,7 +61,7 @@ Status: todo
 Files: `src/lib/fetchAll.ts`, `src/lib/period.ts`, `src/app/reports/page.tsx`, `src/lib/documents.ts`, `src/lib/fetchAll.test.ts`
 Done when: a `fetchAll` helper pages with `.range()`; reports filter server-side by site; a unit test with a fake client returning >1000 rows proves totals include every row (H8).
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U9 — UX: not-found states, friendly errors, mobile tables, dates in IST
 

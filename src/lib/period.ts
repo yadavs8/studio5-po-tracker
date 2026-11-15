@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 
 // The portal starts on this date. Earlier records stay in the database but
 // signed-in users never see them: migration_011's access rules (keyed to
@@ -85,15 +86,16 @@ export interface PeriodFigures {
 
 /** Per-site figures for the reporting period only (from REPORTING_START). */
 export async function loadPeriodFigures(): Promise<Record<string, PeriodFigures>> {
-  const [inv, set, pay, po, ded] = await Promise.all([
-    supabase.from('tax_invoice').select('invoice_id,site_id,invoice_date,gross_invoice_value'),
-    supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,remaining_balance'),
-    supabase.from('payment').select('site_id,payment_date,amount_received'),
-    supabase.from('purchase_order').select('site_id,po_date,total_value_with_gst'),
-    supabase.from('deduction').select('invoice_id,deduction_type,status,amount'),
+  // Whole tables, so page through them (lib/fetchAll): a plain select stops at 1000 rows.
+  // Cancelled / draft invoices are not bills (migration_014).
+  const [invRows, setRows, payRows, poRows, dedRows] = await Promise.all([
+    fetchAll(() => supabase.from('tax_invoice').select('invoice_id,site_id,invoice_date,gross_invoice_value').not('status', 'in', '(cancelled,draft)').order('invoice_id')),
+    fetchAll(() => supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,remaining_balance').order('invoice_id')),
+    fetchAll(() => supabase.from('payment').select('site_id,payment_date,amount_received').order('payment_id')),
+    fetchAll(() => supabase.from('purchase_order').select('site_id,po_date,total_value_with_gst').order('po_id')),
+    fetchAll(() => supabase.from('deduction').select('invoice_id,deduction_type,status,amount').order('deduction_id')),
   ]);
-  const failed = [inv, set, pay, po, ded].find((r) => r.error);
-  if (failed?.error) throw new Error(failed.error.message);
+  const inv = { data: invRows }, set = { data: setRows }, pay = { data: payRows }, po = { data: poRows }, ded = { data: dedRows };
 
   const out: Record<string, PeriodFigures> = {};
   const at = (s: string) => (out[s] ??= { poValue: 0, billed: 0, received: 0, paidOn: 0, tax: 0, held: 0, waiting: 0 });

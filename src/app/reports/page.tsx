@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FileSpreadsheet, Building2, Layers, Clock, Wallet, ScrollText, Download } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import { friendlyError } from '@/lib/plain';
 import { formatDate } from '@/lib/format';
 import { downloadWorkbook, num, today, type Cell, type Sheet } from '@/lib/exportXlsx';
@@ -28,16 +29,16 @@ export default function ReportsPage() {
   useEffect(() => {
     Promise.all([
       supabase.from('site').select('site_id, site_name, client:client_id(display_name)').order('site_name'),
-      supabase.from('tax_invoice').select('site_id'),
-    ]).then(([siteRes, invRes]) => {
+      fetchAll(() => supabase.from('tax_invoice').select('site_id').order('invoice_id')),
+    ]).then(([siteRes, invRows]) => {
       if (siteRes.error) { setError(friendlyError(siteRes.error)); return; }
-      const activeIds = new Set((invRes.data ?? []).map((i: { site_id: string }) => i.site_id));
+      const activeIds = new Set(invRows.map((i: { site_id: string }) => i.site_id));
       setSites(
         ((siteRes.data ?? []) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])
           .filter((s) => activeIds.has(s.site_id))
           .map((s) => ({ site_id: s.site_id, site_name: s.site_name, client: s.client?.display_name ?? '' }))
       );
-    });
+    }).catch((e: Error) => setError(friendlyError(e)));
   }, []);
 
   async function run(key: string, fn: () => Promise<void>) {
@@ -67,8 +68,8 @@ export default function ReportsPage() {
 
   // ---- 2. PO-wise statement, all sites -----------------------------------------------------
   const poStatement = () => run('po', async () => {
-    const [pos, st] = await Promise.all([supabase.from('v_po_summary').select('*').order('po_date'), supabase.from('site').select('site_id, site_name, client:client_id(display_name)')]);
-    const po = (must(pos) as Record<string, unknown>[]).filter((p) => inPeriod(String(p.po_date)));
+    const [pos, st] = await Promise.all([fetchAll(() => supabase.from('v_po_summary').select('*').order('po_date').order('po_id')), supabase.from('site').select('site_id, site_name, client:client_id(display_name)')]);
+    const po = (pos as Record<string, unknown>[]).filter((p) => inPeriod(String(p.po_date)));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
     const list = po.map((p) => ({ p, s: siteMap.get(String(p.site_id)) })).sort((a, b) => (a.s?.client?.display_name ?? '').localeCompare(b.s?.client?.display_name ?? '') || String(a.p.po_date).localeCompare(String(b.p.po_date)));
     const rows: Cell[][] = list.map(({ p, s }, i) => [i + 1, s?.client?.display_name ?? '', s?.site_name ?? '', String(p.scope_description ?? ''), String(p.po_number), formatDate(String(p.po_date)),
@@ -82,37 +83,41 @@ export default function ReportsPage() {
   const towerSheets = () => run('tower', async () => {
     if (!siteId) throw new Error('Please choose a site first.');
     const site = sites.find((s) => s.site_id === siteId)!;
+    // Only this site's rows, every page of them (cancelled / draft invoices are not bills).
     const [inv, set, sub, ded] = await Promise.all([
-      supabase.from('tax_invoice').select('invoice_id,sub_project_id,invoice_number,invoice_date,taxable_value,gst_amount,gross_invoice_value').eq('site_id', siteId).order('invoice_date'),
-      supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,remaining_balance').eq('site_id', siteId),
+      fetchAll(() => supabase.from('tax_invoice').select('invoice_id,sub_project_id,invoice_number,invoice_date,taxable_value,gst_amount,gross_invoice_value')
+        .eq('site_id', siteId).not('status', 'in', '(cancelled,draft)').order('invoice_date').order('invoice_id')),
+      fetchAll(() => supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,remaining_balance').eq('site_id', siteId).order('invoice_id')),
       supabase.from('sub_project').select('sub_project_id,name').eq('site_id', siteId).order('name'),
-      supabase.from('deduction').select('invoice_id,deduction_type,amount,status'),
+      fetchAll(() => supabase.from('deduction').select('invoice_id,deduction_type,amount,status,tax_invoice!inner(site_id)').eq('tax_invoice.site_id', siteId).order('deduction_id')),
     ]);
-    const invs = (must(inv) as Record<string, unknown>[]).filter((i) => inPeriod(String(i.invoice_date)));
-    const settle = new Map((must(set) as Record<string, unknown>[]).map((r) => [String(r.invoice_id), r]));
+    const invs = (inv as Record<string, unknown>[]).filter((i) => inPeriod(String(i.invoice_date)));
+    const settle = new Map((set as Record<string, unknown>[]).map((r) => [String(r.invoice_id), r]));
     const siteBf = (await loadBroughtForward(siteId))[siteId];
     const subs = must(sub) as { sub_project_id: string; name: string }[];
     const ids = new Set(invs.map((i) => String(i.invoice_id)));
-    const deds = (must(ded) as Record<string, unknown>[]).filter((d) => ids.has(String(d.invoice_id)));
+    const deds = (ded as Record<string, unknown>[]).filter((d) => ids.has(String(d.invoice_id)));
     const isHold = (t: unknown) => t === 'retention' || t === 'handover_hold';
+    const isTds = (t: unknown) => t === 'tds' || t === 'gst_tds';
     const groups: { name: string; rows: Record<string, unknown>[] }[] = subs.map((s) => ({ name: s.name, rows: invs.filter((i) => i.sub_project_id === s.sub_project_id) }));
     const other = invs.filter((i) => !i.sub_project_id);
     if (other.length) groups.push({ name: 'Other (no tower)', rows: other });
 
-    const HDR: Cell[] = ['S.N.', 'Invoice No.', 'Invoice date', 'Taxable value', 'GST / IGST', 'Invoice amount', 'Payment received', 'Tax deducted (TDS)', 'Held back until handover', 'Balance still to pay'];
+    const HDR: Cell[] = ['S.N.', 'Invoice No.', 'Invoice date', 'Taxable value', 'GST / IGST', 'Invoice amount', 'Payment received', 'Tax deducted (TDS)', 'Other deductions (penalty, discount…)', 'Held back until handover', 'Balance still to pay'];
     const sheets: Sheet[] = [];
     const summary: Cell[][] = [];
     groups.filter((g) => g.rows.length).forEach((g) => {
       const rows: Cell[][] = g.rows.map((i, n) => {
         const id = String(i.invoice_id), s = settle.get(id);
         const dd = deds.filter((d) => String(d.invoice_id) === id);
-        const tds = dd.filter((d) => !isHold(d.deduction_type)).reduce((a, d) => a + num(d.amount), 0);
+        const tds = dd.filter((d) => isTds(d.deduction_type)).reduce((a, d) => a + num(d.amount), 0);
+        const otherDed = dd.filter((d) => !isTds(d.deduction_type) && !isHold(d.deduction_type)).reduce((a, d) => a + num(d.amount), 0);
         const held = dd.filter((d) => isHold(d.deduction_type) && d.status === 'pending').reduce((a, d) => a + num(d.amount), 0);
-        return [n + 1, String(i.invoice_number), formatDate(String(i.invoice_date)), num(i.taxable_value), num(i.gst_amount), num(i.gross_invoice_value), num(s?.total_payments_allocated), tds, held, num(s?.remaining_balance ?? i.gross_invoice_value)];
+        return [n + 1, String(i.invoice_number), formatDate(String(i.invoice_date)), num(i.taxable_value), num(i.gst_amount), num(i.gross_invoice_value), num(s?.total_payments_allocated), tds, otherDed, held, num(s?.remaining_balance ?? i.gross_invoice_value)];
       });
-      const tot: Cell[] = ['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), sum(rows, 9)];
-      sheets.push({ name: g.name, widths: [6, 22, 14, 16, 14, 16, 18, 18, 22, 20], rows: [...HEAD(`${site.client} - ${site.site_name} - ${g.name} payment details`), HDR, ...rows, tot] });
-      summary.push([g.name, num(tot[5]), num(tot[6]), num(tot[7]), num(tot[8]), num(tot[9])]);
+      const tot: Cell[] = ['', 'TOTAL', '', sum(rows, 3), sum(rows, 4), sum(rows, 5), sum(rows, 6), sum(rows, 7), sum(rows, 8), sum(rows, 9), sum(rows, 10)];
+      sheets.push({ name: g.name, widths: [6, 22, 14, 16, 14, 16, 18, 18, 22, 22, 20], rows: [...HEAD(`${site.client} - ${site.site_name} - ${g.name} payment details`), HDR, ...rows, tot] });
+      summary.push([g.name, num(tot[5]), num(tot[6]), num(tot[7]) + num(tot[8]), num(tot[9]), num(tot[10])]);
     });
     if (!sheets.length && !siteBf) throw new Error(`This site has no tax invoices from ${REPORTING_START_LABEL} onwards.`);
     if (siteBf && Math.abs(siteBf.billed) > 0.5) {
@@ -120,22 +125,22 @@ export default function ReportsPage() {
     }
     summary.push(['TOTAL', sum(summary, 1), sum(summary, 2), sum(summary, 3), sum(summary, 4), sum(summary, 5)]);
     sheets.unshift({ name: 'Summary', widths: [30, 18, 18, 18, 22, 20],
-      rows: [...HEAD(`${site.client} - ${site.site_name} - summary by tower / package`), ['Tower / package', 'Tax invoices', 'Payments received', 'Tax deducted (TDS)', 'Held back until handover', 'Balance still to pay'], ...summary] });
+      rows: [...HEAD(`${site.client} - ${site.site_name} - summary by tower / package`), ['Tower / package', 'Tax invoices', 'Payments received', 'Tax and other deductions', 'Held back until handover', 'Balance still to pay'], ...summary] });
     downloadWorkbook(`Studio5 - ${site.site_name} - tower payment details`, sheets);
   });
 
   // ---- 4. Money waiting to be paid, with age ------------------------------------------------
   const ageing = () => run('age', async () => {
     const [set, inv, st] = await Promise.all([
-      supabase.from('v_invoice_settlement').select('invoice_id,site_id,invoice_number,gross_invoice_value,total_payments_allocated,total_deducted,remaining_balance').gt('remaining_balance', 0.5),
-      supabase.from('tax_invoice').select('invoice_id,invoice_date'),
+      fetchAll(() => supabase.from('v_invoice_settlement').select('invoice_id,site_id,invoice_number,gross_invoice_value,total_payments_allocated,total_deducted,remaining_balance').gt('remaining_balance', 0.5).order('invoice_id')),
+      fetchAll(() => supabase.from('tax_invoice').select('invoice_id,invoice_date').order('invoice_id')),
       supabase.from('site').select('site_id, site_name, client:client_id(display_name)'),
     ]);
-    const dates = new Map((must(inv) as { invoice_id: string; invoice_date: string }[]).map((i) => [i.invoice_id, i.invoice_date]));
+    const dates = new Map((inv as { invoice_id: string; invoice_date: string }[]).map((i) => [i.invoice_id, i.invoice_date]));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
     const bfs = await loadBroughtForward();
     const now = Date.now();
-    const list = (must(set) as Record<string, unknown>[]).filter((r) => inPeriod(dates.get(String(r.invoice_id)))).map((r) => {
+    const list = (set as Record<string, unknown>[]).filter((r) => inPeriod(dates.get(String(r.invoice_id)))).map((r) => {
       const d = dates.get(String(r.invoice_id)) ?? '';
       const days = d ? Math.max(0, Math.floor((now - new Date(d).getTime()) / 86400000)) : 0;
       return { r, d, days, s: siteMap.get(String(r.site_id)) };
@@ -161,16 +166,16 @@ export default function ReportsPage() {
   // ---- 5. Payments register ---------------------------------------------------------------
   const payments = () => run('pay', async () => {
     const [pay, al, po, st] = await Promise.all([
-      supabase.from('payment').select('*').order('payment_date'),
-      supabase.from('payment_allocation').select('payment_id,amount_allocated'),
-      supabase.from('purchase_order').select('po_id,po_number'),
+      fetchAll(() => supabase.from('payment').select('*').order('payment_date').order('payment_id')),
+      fetchAll(() => supabase.from('payment_allocation').select('payment_id,amount_allocated').order('allocation_id')),
+      fetchAll(() => supabase.from('purchase_order').select('po_id,po_number').order('po_id')),
       supabase.from('site').select('site_id, site_name, client:client_id(display_name)'),
     ]);
     const used = new Map<string, number>();
-    (must(al) as { payment_id: string; amount_allocated: number }[]).forEach((a) => used.set(a.payment_id, (used.get(a.payment_id) ?? 0) + num(a.amount_allocated)));
-    const poNo = new Map((must(po) as { po_id: string; po_number: string }[]).map((p) => [p.po_id, p.po_number]));
+    (al as { payment_id: string; amount_allocated: number }[]).forEach((a) => used.set(a.payment_id, (used.get(a.payment_id) ?? 0) + num(a.amount_allocated)));
+    const poNo = new Map((po as { po_id: string; po_number: string }[]).map((p) => [p.po_id, p.po_number]));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
-    const rows: Cell[][] = (must(pay) as Record<string, unknown>[]).filter((p) => inPeriod(String(p.payment_date))).map((p, i) => {
+    const rows: Cell[][] = (pay as Record<string, unknown>[]).filter((p) => inPeriod(String(p.payment_date))).map((p, i) => {
       const s = siteMap.get(String(p.site_id)); const u = used.get(String(p.payment_id)) ?? 0;
       return [i + 1, formatDate(String(p.payment_date)), s?.client?.display_name ?? '', s?.site_name ?? '', p.po_id ? poNo.get(String(p.po_id)) ?? '' : '', String(p.payment_type).replace(/_/g, ' '),
         String(p.payment_mode).replace(/_/g, ' '), String(p.utr_or_reference ?? ''), String(p.remarks ?? ''), num(p.amount_received), u, num(p.amount_received) - u];

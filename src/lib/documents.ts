@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 
 /** Matches the database's document_type list (challan added in migration_012). */
 export type UploadDocType =
@@ -143,20 +144,22 @@ export async function discardDocument(documentId: string | null): Promise<void> 
 
 /** Lists documents, newest first: one site's, or every site's when siteId is left out. */
 export async function listDocuments(siteId?: string): Promise<DocumentRow[]> {
-  let q = supabase
-    .from('document')
-    .select(
-      'document_id, document_type, doc_number, doc_date, file_name, file_url, notes, uploaded_at, site_id, po_id, linked_type, linked_id, ' +
-        'site:site_id(site_name, client:client_id(display_name)), po:po_id(po_number)'
-    )
-    .not('file_url', 'like', 'inbox/%')
-    .order('doc_date', { ascending: false, nullsFirst: false })
-    .order('uploaded_at', { ascending: false })
-    .limit(2000);
-  if (siteId) q = q.eq('site_id', siteId);
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as DocumentRow[];
+  // Every page of them: the server returns at most 1000 rows per request.
+  const rows = await fetchAll(() => {
+    let q = supabase
+      .from('document')
+      .select(
+        'document_id, document_type, doc_number, doc_date, file_name, file_url, notes, uploaded_at, site_id, po_id, linked_type, linked_id, ' +
+          'site:site_id(site_name, client:client_id(display_name)), po:po_id(po_number)'
+      )
+      .not('file_url', 'like', 'inbox/%');
+    if (siteId) q = q.eq('site_id', siteId);
+    return q
+      .order('doc_date', { ascending: false, nullsFirst: false })
+      .order('uploaded_at', { ascending: false })
+      .order('document_id');
+  });
+  return rows as unknown as DocumentRow[];
 }
 
 /** Moves a document to a site / PO (for papers that are not tied to a PO, PI, invoice or payment). */

@@ -80,12 +80,31 @@ export async function flows({ browser, BASE, OWNER, OUTSIDER, fail }) {
     await page.getByText('Payments (1)').waitFor({ timeout: 10000 });
   });
 
+  await step('switching site with the "Match to invoice" drawer open does not crash the page', async () => {
+    await page.getByRole('button', { name: 'Match to invoice' }).first().click();
+    await page.getByLabel('Site').selectOption({ label: 'Test Hotels - Pune' });
+    await settle(page);
+    await page.getByText('Payments (').waitFor({ timeout: 10000 });
+  });
+
   await step('the site page adds it up: ₹1,18,000 billed, ₹50,000 received, ₹68,000 waiting', async () => {
     await page.goto(`${BASE}/site/?id=${GOA}`); await settle(page);
     const text = await page.innerText('main');
     for (const want of ['₹1,18,000.00', '₹50,000.00', '₹68,000.00']) {
       if (!text.includes(want)) throw new Error(`site page is missing ${want}`);
     }
+  });
+
+  await step('a handover hold can be added and then marked released', async () => {
+    await page.goto(`${BASE}/invoices/`); await pickSite(page); await settle(page);
+    await page.getByRole('button', { name: '+ Deduction' }).first().click();
+    await page.getByLabel('Type').selectOption({ label: 'Held back until site handover' });
+    await page.getByLabel('Amount', { exact: true }).fill('5000');
+    await page.getByRole('button', { name: 'Add Deduction' }).click();
+    await page.getByRole('button', { name: 'Mark released' }).waitFor({ timeout: 10000 });
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('button', { name: 'Mark released' }).click();
+    await page.getByText('· released').first().waitFor({ timeout: 10000 });
   });
 
   await step('the account statement received total equals the bank', async () => {

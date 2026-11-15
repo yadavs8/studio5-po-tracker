@@ -120,7 +120,8 @@ function UploadPageInner() {
 
   // A PO / PI / tax invoice with the same number on the same site, which this upload can replace.
   const [existingLookup, setExistingLookup] = useState<{ key: string; rec: ExistingRecord | null; error?: string }>({ key: '', rec: null });
-  const [overrideChoice, setOverrideChoice] = useState<boolean | null>(null);
+  // The "replace" tick belongs to one number on one site: it lapses as soon as the number, type or site changes.
+  const [overrideFor, setOverrideFor] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -204,7 +205,7 @@ function UploadPageInner() {
   const lookupError = lookupKey && existingLookup.key === lookupKey ? existingLookup.error ?? null : null;
   const existing = lookupKey && existingLookup.key === lookupKey ? existingLookup.rec : null;
   // Replacing deletes the old file, so it is never the default: the person must tick it.
-  const isOverride = !!existing && overrideChoice === true;
+  const isOverride = !!existing && overrideFor === lookupKey;
 
   // PO link: what the person picked, else the PO whose number the AI read off the document
   const autoPoId =
@@ -295,8 +296,13 @@ function UploadPageInner() {
     abandonReading();
     // A site chosen by hand (or from the link) stays; everything else is refilled from the new file.
     touched.current = new Set<FieldKey>(siteIdRef.current && (touched.current.has('site') || siteIdRef.current === presetSite) ? ['site'] : []);
-    setOverrideChoice(null);
+    setOverrideFor(null);
+    setExistingLookup({ key: '', rec: null });
     setPoReference(null);
+    // Links chosen for the previous file do not carry over to a new one.
+    setLinkedPoId(null);
+    setSelectedPiIds([]);
+    setInvoicePiId('');
     setFile(selectedFile);
     setSuccess(null);
     setError(null);
@@ -330,7 +336,9 @@ function UploadPageInner() {
   const gstCheck = resolveGst(
     Number.isNaN(taxableNum) ? null : taxableNum,
     gst.trim() === '' || Number.isNaN(gstNum) ? null : gstNum,
-    amount.trim() === '' || Number.isNaN(totalNum) ? null : totalNum,
+    // The total read off the file is not shown for invoices, so it is only used to work out a blank GST,
+    // never to refuse amounts the person corrected.
+    gst.trim() === '' && amount.trim() !== '' && !Number.isNaN(totalNum) ? totalNum : null,
   );
   const invoiceTotal = gstCheck.ok ? gstCheck.gross : round2((Number.isNaN(taxableNum) ? 0 : taxableNum) + (Number.isNaN(gstNum) ? 0 : gstNum));
   const openPis = sitePis.filter((p) => p.status !== 'converted_to_invoice');
@@ -484,6 +492,9 @@ function UploadPageInner() {
       }
 
       setActiveSiteIds((prev) => new Set(prev).add(siteId));
+      // The record now exists (or was replaced): forget the old "does it exist" answer.
+      setExistingLookup({ key: '', rec: null });
+      setOverrideFor(null);
       setSuccess({
         documentId: newDocId,
         title: docNumber.trim() || file!.name,
@@ -516,7 +527,8 @@ function UploadPageInner() {
   function handleReset() {
     abandonReading();
     touched.current = new Set();
-    setOverrideChoice(null);
+    setOverrideFor(null);
+    setExistingLookup({ key: '', rec: null });
     setPoReference(null);
     setFile(null);
     setDetected(null);
@@ -716,7 +728,7 @@ function UploadPageInner() {
                         <input
                           type="checkbox"
                           checked={isOverride}
-                          onChange={(e) => setOverrideChoice(e.target.checked)}
+                          onChange={(e) => setOverrideFor(e.target.checked ? lookupKey : null)}
                           className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
                         />
                         Replace it with this copy (updates its date and amount and swaps the attached file)

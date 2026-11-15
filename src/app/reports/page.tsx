@@ -6,7 +6,7 @@ import { FileSpreadsheet, Building2, Layers, Clock, Wallet, ScrollText, Download
 import { supabase } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetchAll';
 import { friendlyError } from '@/lib/plain';
-import { formatDate } from '@/lib/format';
+import { formatDate, daysSince } from '@/lib/format';
 import { downloadWorkbook, num, today, type Cell, type Sheet } from '@/lib/exportXlsx';
 import { PageHeader, ErrorBanner, PrimaryButton, FieldSelect, buttonClass } from '@/lib/ui';
 import { inPeriod, loadBroughtForward, loadPeriodFigures, REPORTING_START_LABEL } from '@/lib/period';
@@ -139,10 +139,9 @@ export default function ReportsPage() {
     const dates = new Map((inv as { invoice_id: string; invoice_date: string }[]).map((i) => [i.invoice_id, i.invoice_date]));
     const siteMap = new Map(((must(st) as unknown as { site_id: string; site_name: string; client: { display_name: string } | null }[])).map((s) => [s.site_id, s]));
     const bfs = await loadBroughtForward();
-    const now = Date.now();
     const list = (set as Record<string, unknown>[]).filter((r) => inPeriod(dates.get(String(r.invoice_id)))).map((r) => {
       const d = dates.get(String(r.invoice_id)) ?? '';
-      const days = d ? Math.max(0, Math.floor((now - new Date(d).getTime()) / 86400000)) : 0;
+      const days = d ? Math.max(0, daysSince(d)) : 0; // counted in Indian days, whatever the computer's clock
       return { r, d, days, s: siteMap.get(String(r.site_id)) };
     }).sort((a, b) => b.days - a.days);
     const bucket = (n: number) => (n <= 30 ? '0-30 days' : n <= 60 ? '31-60 days' : n <= 90 ? '61-90 days' : 'Over 90 days');

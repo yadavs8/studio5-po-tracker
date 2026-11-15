@@ -141,6 +141,15 @@ export async function documentDownloadUrl(documentId: string): Promise<string | 
 /** Undo an upload when the record it belongs to could not be saved, so no orphan files are left behind. */
 export async function discardDocument(documentId: string | null): Promise<void> {
   if (!documentId) return;
+  // Clean-up only: it must never throw over the real error the caller is about to show.
+  try {
+    await discardDocumentOrThrow(documentId);
+  } catch {
+    /* the file stays filed under its site; nothing else depends on it */
+  }
+}
+
+async function discardDocumentOrThrow(documentId: string): Promise<void> {
   const { data: doc } = await supabase.from('document').select('file_url').eq('document_id', documentId).maybeSingle();
   const { error } = await supabase.from('document').delete().eq('document_id', documentId);
   // Only remove the file once nothing points at the row any more, so a record never loses its file.

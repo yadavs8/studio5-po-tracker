@@ -112,7 +112,7 @@ function SitePageInner() {
     <div className="pb-12">
       <PageHeader
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <a href="#documents" className={buttonClass}>
               <FolderOpen size={15} /> Documents
             </a>

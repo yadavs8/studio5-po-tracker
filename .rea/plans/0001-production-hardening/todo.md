@@ -68,7 +68,7 @@ Status: done
 Files: `src/lib/plain.ts`, `src/lib/format.ts`, `src/lib/ui.tsx`, `src/app/site/**`, `src/app/po/page.tsx`, `src/app/pi/page.tsx`, `src/app/reports/page.tsx`, `src/lib/format.test.ts`, `src/lib/plain.test.ts`, `e2e/smoke.spec.ts`
 Done when: invalid/missing ids show a plain "not found" state with no actions (M13, L14); `friendlyError` maps PGRST116/22P02; statement and site pages have no horizontal page overflow at 390 px (M14, Playwright check); dates format and age in Asia/Kolkata (L1, L13) with unit tests; L2, L4, L16 fixed.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U10 — Code health: lint to zero, deps cleanup + audit, docs, session cookie
 

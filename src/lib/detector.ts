@@ -62,6 +62,7 @@ export async function extractTextPreview(file: File, maxBytes = 120000): Promise
         word = '';
       }
     }
+    if (word.length >= 2) result += word; // the last run of text, if the file ends without a binary byte
     return result;
   } catch {
     return '';
@@ -93,15 +94,16 @@ export async function detectDocument(
   } else if (/\b(?:tax\s*invoice|invoice|inv|s5i)\b/i.test(cleanName)) {
     docType = 'invoice';
     docTypeName = 'Tax Invoice';
-  } else if (
-    /\b(?:po|wo|purchase\s*order|work\s*order)\b/i.test(cleanName) ||
-    /\b(?:purchase\s*order|work\s*order)\b/i.test(fileText)
-  ) {
+  } else if (/\b(?:po|wo|purchase\s*order|work\s*order)\b/i.test(cleanName)) {
     docType = 'po';
     docTypeName = 'Purchase Order / Work Order';
   } else if (/\b(?:tax\s*invoice)\b/i.test(fileText)) {
+    // checked before the PO words in the text: an invoice's text quotes "Purchase Order No…"
     docType = 'invoice';
     docTypeName = 'Tax Invoice';
+  } else if (/\b(?:purchase\s*order|work\s*order)\b/i.test(fileText)) {
+    docType = 'po';
+    docTypeName = 'Purchase Order / Work Order';
   } else if (
     /\b(?:payment|advice|receipt|neft|rtgs|utr)\b/i.test(cleanName) ||
     /\b(?:payment\s*advice|payment\s*receipt)\b/i.test(fileText)
@@ -230,6 +232,8 @@ export async function findExistingRecord(
   const num = docNumber.trim();
   if (!num || !siteId) return null;
   const exact = num.replace(/[\\%_]/g, (c) => `\\${c}`); // ilike without wildcards = case-insensitive equals
+  // PostgREST also reads * as a wildcard, so every hit is re-checked: only the same number (ignoring case) counts.
+  const same = (v: string | null | undefined) => (v ?? '').trim().toLowerCase() === num.toLowerCase();
   if (docType === 'pi') {
     const { data, error } = await supabase
       .from('proforma_invoice')
@@ -238,7 +242,7 @@ export async function findExistingRecord(
       .ilike('pi_number', exact)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    return data
+    return data && same(data.pi_number)
       ? { id: data.pi_id, table: 'proforma_invoice', number: data.pi_number, date: data.pi_date, amount: Number(data.amount), taxable: null, gst: null, document_id: data.document_id }
       : null;
   }
@@ -250,7 +254,7 @@ export async function findExistingRecord(
       .ilike('po_number', exact)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    return data
+    return data && same(data.po_number)
       ? {
           id: data.po_id, table: 'purchase_order', number: data.po_number, date: data.po_date, amount: Number(data.total_value_with_gst),
           taxable: data.taxable_value == null ? null : Number(data.taxable_value), gst: data.gst_amount == null ? null : Number(data.gst_amount),
@@ -266,7 +270,7 @@ export async function findExistingRecord(
       .ilike('invoice_number', exact)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    return data
+    return data && same(data.invoice_number)
       ? {
           id: data.invoice_id,
           table: 'tax_invoice',

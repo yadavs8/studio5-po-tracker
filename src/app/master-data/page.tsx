@@ -30,11 +30,14 @@ export default function MasterDataPage() {
     setSites([]);
     setSelectedSiteId(null);
     setSubProjects([]);
+    setShowNewSite(false);
+    setShowNewSubProject(false);
     loadSites(id);
   }
   function chooseSite(id: string) {
     setSelectedSiteId(id);
     setSubProjects([]);
+    setShowNewSubProject(false);
     loadSubProjects(id);
   }
 

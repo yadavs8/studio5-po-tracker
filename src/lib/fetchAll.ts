@@ -1,6 +1,8 @@
 // Supabase (PostgREST) returns at most 1000 rows per request, silently. Any total built
 // from a whole table must page through it, or it quietly drops rows once the table grows.
 
+// Must not be larger than the project's API "max rows" setting (Supabase default 1000): a page
+// shorter than PAGE_SIZE is read as the last one.
 export const PAGE_SIZE = 1000;
 
 interface Pageable<T> {

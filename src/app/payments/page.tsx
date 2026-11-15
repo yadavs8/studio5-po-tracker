@@ -76,7 +76,10 @@ export default function PaymentsPage() {
 
   // A reply that belongs to an earlier site is ignored.
   const loadSeq = useRef(0);
-  async function loadSite(forSite = siteId) {
+  // The current site, for reloads triggered after an await (a save) whose closure may be older.
+  const currentSite = useRef(siteId);
+  useEffect(() => { currentSite.current = siteId; }, [siteId]);
+  async function loadSite(forSite = currentSite.current) {
     const seq = ++loadSeq.current;
     if (!forSite) return;
     const [payRes, openRes] = await Promise.all([
@@ -100,9 +103,7 @@ export default function PaymentsPage() {
     setOpenInvoices((openRes.data ?? []) as InvoiceSettlementRow[]);
   }
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading the chosen site's data is this effect's job
     loadSite(siteId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
   // Never render the drawer for a payment that is not in the current list (that used to crash the page).
@@ -180,6 +181,7 @@ export default function PaymentsPage() {
 
         {allocatingPayment && (
           <AllocationDrawer
+            key={allocatingPayment.payment_id}
             payment={allocatingPayment}
             unallocatedAmount={unallocated[allocatingPayment.payment_id] ?? 0}
             openInvoices={openInvoices}

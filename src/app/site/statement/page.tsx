@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
-import { formatINR, formatDate } from '@/lib/format';
+import { formatINR, formatDate, todayIST } from '@/lib/format';
 import { ErrorBanner, EmptyState } from '@/lib/ui';
 import { friendlyError, isUuid } from '@/lib/plain';
 import { documentUrl } from '@/lib/documents';
@@ -146,13 +146,13 @@ function StatementPageInner() {
   const receiptRows = pays.map((p) => ({ p, used: n(allocByPay[p.payment_id]), unmatched: n(p.amount_received) - n(allocByPay[p.payment_id]) }));
 
   function exportExcel() {
-    const asOn = new Date().toLocaleDateString('en-IN');
+    const asOn = formatDate(todayIST());
     const head = ['STUDIO5 INTERIORS PVT LTD', `${client} - ${siteName}`, `Account statement as on ${asOn} (from ${REPORTING_START_LABEL})`, ''];
     const s1: (string | number)[][] = [
       ...head.map((h) => [h]),
       ['S.N.', 'Particulars', 'PO No.', 'Dated', 'PO amount (with GST)', 'Billed so far', 'Payment received', 'Tax deducted by client', 'Held back until handover', 'Balance still to receive'],
       ...(hasBf ? [['', bfLabel, '', `before ${formatDate(REPORTING_START)}`, '', b.billed, b.received + b.receivedSince, b.tax, b.held, b.balance]] : []),
-      ...pos.map((p, i) => [i + 1, p.scope_description ?? '', p.po_number, formatDate(p.po_date), n(p.po_value), n(p.invoiced), n(p.received_bank), n(p.tds_and_other_deductions), n(p.retention_pending), n(p.balance_against_po)]),
+      ...pos.map((p, i) => [i + 1, p.scope_description || `Purchase order ${p.po_number}`, p.po_number, formatDate(p.po_date), n(p.po_value), n(p.invoiced), n(p.received_bank), n(p.tds_and_other_deductions), n(p.retention_pending), n(p.balance_against_po)]),
       ...(noPoInvs.length ? [['', 'Invoices not linked to a PO listed here', '', '', '', noPo.billed, noPo.paid, noPo.tds, noPo.held, noPo.left]] : []),
       ...(unassigned > 0.5 ? [['', 'Money received, not yet matched to an invoice or PO', '', '', '', '', unassigned, '', '', '']] : []),
       ['', 'TOTAL', '', '', totals.po, totals.billed, totals.received, totals.tds, totals.held, ''],
@@ -188,7 +188,7 @@ function StatementPageInner() {
     XLSX.writeFile(wb, `Studio5 - ${siteName} - account statement.xlsx`);
   }
 
-  const asOn = formatDate(new Date().toISOString());
+  const asOn = formatDate(todayIST());
 
   return (
     <div className="min-h-screen bg-white px-8 py-6 print:px-0 print:py-0">
@@ -215,7 +215,7 @@ function StatementPageInner() {
           )}
 
           <H>1. Purchase orders — what was agreed, received and what is left</H>
-          <table className="w-full border-collapse text-sm">
+          <div className="overflow-x-auto print:overflow-visible"><table className="w-full border-collapse text-sm">
             <thead><tr className="bg-slate-900 text-white">
               {['S.N.', 'Particulars', 'PO No.', 'Dated', 'PO amount (with GST)', 'Billed so far', 'Payment received', 'Tax deducted by client', 'Held back until handover', 'Balance still to receive'].map((h, i) => (
                 <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
@@ -229,7 +229,7 @@ function StatementPageInner() {
               )}
               {pos.map((p, i) => (
                 <tr key={p.po_id}>
-                  <C>{i + 1}</C><C>{p.scope_description ?? ''}</C><C>{p.po_number}</C><C mono>{formatDate(p.po_date)}</C>
+                  <C>{i + 1}</C><C>{p.scope_description || `Purchase order ${p.po_number}`}</C><C>{p.po_number}</C><C mono>{formatDate(p.po_date)}</C>
                   <C r>{formatINR(p.po_value)}</C><C r>{formatINR(p.invoiced)}</C><C r>{formatINR(p.received_bank)}</C>
                   <C r>{formatINR(p.tds_and_other_deductions)}</C><C r>{formatINR(p.retention_pending)}</C><C r bold>{formatINR(p.balance_against_po)}</C>
                 </tr>
@@ -264,13 +264,13 @@ function StatementPageInner() {
                 </tr>
               )}
             </tbody>
-          </table>
+          </table></div>
           {noPoInvs.length > 0 && <p className="mt-1 text-[11px] text-slate-500">For invoices that are not linked to a PO there is nothing to measure against, so the last column is simply what the client still owes on those invoices (held-back amounts are shown in their own column, not counted as owed).</p>}
 
           <H>2. Proforma invoices sent</H>
           {pis.length === 0 ? <p className="text-sm text-slate-400">No proforma invoices yet.</p> : (
             <>
-              <table className="w-full border-collapse text-sm">
+              <div className="overflow-x-auto print:overflow-visible"><table className="w-full border-collapse text-sm">
                 <thead><tr className="bg-slate-900 text-white">
                   {['S.N.', 'Particulars', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status / note', 'Status'].map((h, i) => (
                     <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i === 5 ? 'text-right' : 'text-left'}`}>{h}</th>))}
@@ -301,14 +301,14 @@ function StatementPageInner() {
                     </tr>
                   )}
                 </tbody>
-              </table>
+              </table></div>
               <p className="mt-1 text-[11px] text-slate-500">A proforma invoice asks the client for payment before the tax invoice is raised. It is not a bill, so PI amounts are not counted in the balances above — the tax invoices below are.</p>
             </>
           )}
 
           <H>3. Tax invoices raised</H>
           {invs.length === 0 ? <p className="text-sm text-slate-400">No tax invoices raised yet.</p> : (
-            <table className="w-full border-collapse text-sm">
+            <div className="overflow-x-auto print:overflow-visible"><table className="w-full border-collapse text-sm">
               <thead><tr className="bg-slate-900 text-white">
                 {['Invoice No.', 'Date', 'Taxable value', 'GST', 'Invoice total', 'Paid so far', 'Tax deducted / held', 'Still to pay'].map((h, i) => (
                   <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i >= 2 ? 'text-right' : 'text-left'}`}>{h}</th>))}
@@ -318,12 +318,12 @@ function StatementPageInner() {
                   <GroupRows key={g.k} g={g} settle={settle} />
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
 
           <H>4. Money received in bank</H>
           {pays.length === 0 ? <p className="text-sm text-slate-400">No money received yet.</p> : (
-            <table className="w-full border-collapse text-sm">
+            <div className="overflow-x-auto print:overflow-visible"><table className="w-full border-collapse text-sm">
               <thead><tr className="bg-slate-900 text-white">
                 {['Date', 'Reference / note', 'Type', 'For PO', 'Amount received', 'Used on invoices', 'Not yet matched'].map((h, i) => (
                   <th key={h} className={`border border-slate-900 px-2 py-2 text-[11px] font-semibold ${i >= 4 ? 'text-right' : 'text-left'}`}>{h}</th>))}
@@ -341,7 +341,7 @@ function StatementPageInner() {
                   <C r bold>{formatINR(sum(receiptRows, (r) => n(r.p.amount_received)))}</C><C r bold>{formatINR(sum(receiptRows, (r) => r.used))}</C><C r bold>{formatINR(sum(receiptRows, (r) => r.unmatched))}</C>
                 </tr>
               </tbody>
-            </table>
+            </table></div>
           )}
 
           <div className="mt-8 border-t border-slate-200 pt-3 text-[11px] leading-relaxed text-slate-600">

@@ -17,6 +17,10 @@ describe('detectDocument (quick file-name guess)', () => {
     expect((await detectDocument(file('Tax Invoice INV-204 against PO 4500.pdf'), SITES)).docType).toBe('invoice');
     expect((await detectDocument(file('Invoice 77 for WO-12.pdf'), SITES)).docType).toBe('invoice');
   });
+  it('reads a file whose text says "Tax Invoice … Purchase Order No" as an invoice', async () => {
+    const f = new File(['TAX INVOICE  Invoice No S5/I/204  Purchase Order No 4500123'], 'S5-204.pdf', { type: 'application/pdf' });
+    expect((await detectDocument(f, SITES)).docType).toBe('invoice');
+  });
   it('still reads PIs and POs', async () => {
     expect((await detectDocument(file('PI 042 Redfox.pdf'), SITES)).docType).toBe('pi');
     expect((await detectDocument(file('Proforma invoice 12.pdf'), SITES)).docType).toBe('pi');

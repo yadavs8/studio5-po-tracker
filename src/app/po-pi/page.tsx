@@ -80,7 +80,10 @@ export default function PoPiPage() {
 
   // A reply that belongs to an earlier site / sub-project is ignored.
   const loadSeq = useRef(0);
-  async function loadLists(forSite = siteId, forSub = subProjectId) {
+  // The current choice, for reloads triggered after an await (a save) whose closure may be older.
+  const current = useRef({ siteId, subProjectId });
+  useEffect(() => { current.current = { siteId, subProjectId }; }, [siteId, subProjectId]);
+  async function loadLists(forSite = current.current.siteId, forSub = current.current.subProjectId) {
     const seq = ++loadSeq.current;
     if (!forSite) return;
     let pq = supabase.from('purchase_order').select('*').eq('site_id', forSite);
@@ -93,9 +96,7 @@ export default function PoPiPage() {
     setPis(pi.data as ProformaInvoice[]);
   }
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading the chosen site's lists is this effect's job
     loadLists(siteId, subProjectId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId, subProjectId]);
 
   const selectedSite = sites.find((s) => s.site_id === siteId);

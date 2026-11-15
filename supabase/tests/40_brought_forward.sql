@@ -35,6 +35,23 @@ begin
 end $$;
 reset role;
 
+-- an old advance later matched to a NEW invoice is counted there, not also in the brought-forward
+reset role;
+insert into public.payment (payment_id, site_id, payment_date, amount_received, payment_type, utr_or_reference)
+values ('b1111111-0000-0000-0000-0000000000f2', '51111111-0000-0000-0000-000000000001', '2026-07-25', 10000, 'advance', 'UTR-ADV-OLD');
+insert into public.payment_allocation (payment_id, invoice_id, amount_allocated)
+values ('b1111111-0000-0000-0000-0000000000f2', '11111111-0000-0000-0000-0000000000a1', 10000);   -- INV-1, Sept
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+do $$
+declare b record;
+begin
+  select * into b from public.brought_forward('51111111-0000-0000-0000-000000000001');
+  assert b.received = 20000, format('old advance used on a new invoice must not count as old money received, got %s', b.received);
+  assert b.balance = 30000, format('balance should stay 30,000, got %s', b.balance);
+end $$;
+reset role;
+
 -- outsiders and anon get nothing
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
 set local role authenticated;

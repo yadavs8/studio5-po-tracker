@@ -12,6 +12,7 @@
 -- Figures (same cash-ledger rule the app already used):
 --   billed          tax invoices before the start (cancelled / draft left out)
 --   received        money received before the start, except money tagged to a PO dated from the start
+--                   and the part of it matched to invoices dated from the start (counted there)
 --   tax             TDS and other non-hold deductions on those older invoices
 --   held            retention / handover holds still pending on them
 --   received_since  later payments matched to those older invoices
@@ -39,8 +40,16 @@ begin
   ),
   new_po as (select po_id from purchase_order where po_date >= reporting_start()),
   b as (select o.site_id, sum(o.gross_invoice_value) as v from old_inv o group by o.site_id),
+  -- old money matched to invoices dated from the start is counted on those invoices, so not here
+  used_on_new as (
+    select a.payment_id, sum(a.amount_allocated) as v
+    from payment_allocation a join tax_invoice i on i.invoice_id = a.invoice_id
+    where i.invoice_date >= reporting_start()
+    group by a.payment_id
+  ),
   r as (
-    select p.site_id, sum(p.amount_received) as v from payment p
+    select p.site_id, sum(greatest(p.amount_received - coalesce(u.v, 0), 0)) as v
+    from payment p left join used_on_new u on u.payment_id = p.payment_id
     where p.payment_date < reporting_start()
       and (p.po_id is null or p.po_id not in (select po_id from new_po))
       and (p_site_id is null or p.site_id = p_site_id)

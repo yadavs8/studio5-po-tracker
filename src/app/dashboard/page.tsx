@@ -72,7 +72,7 @@ export default function DashboardPage() {
         title="Overview"
         subtitle={`All sites from ${REPORTING_START_LABEL}.`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/upload"
               className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"

@@ -1,3 +1,4 @@
+import { formatDate, todayIST } from '@/lib/format';
 import * as XLSX from 'xlsx';
 
 export type Cell = string | number | null;
@@ -22,4 +23,4 @@ export function downloadWorkbook(filename: string, sheets: Sheet[]) {
 }
 
 export const num = (v: unknown): number => Number(v ?? 0);
-export const today = () => new Date().toLocaleDateString('en-IN');
+export const today = () => formatDate(todayIST());

@@ -98,7 +98,10 @@ export default function InvoicesPage() {
 
   // Each load gets a number; a reply to an older load (an earlier site) is ignored.
   const loadSeq = useRef(0);
-  async function loadInvoices(forSite = siteId, forSub = subProjectId) {
+  // The current choice, for reloads triggered after an await (a save) whose closure may be older.
+  const current = useRef({ siteId, subProjectId });
+  useEffect(() => { current.current = { siteId, subProjectId }; }, [siteId, subProjectId]);
+  async function loadInvoices(forSite = current.current.siteId, forSub = current.current.subProjectId) {
     const seq = ++loadSeq.current;
     if (!forSite) return;
     let q = supabase.from('tax_invoice').select('*').eq('site_id', forSite);
@@ -125,9 +128,7 @@ export default function InvoicesPage() {
     setDeductionsByInvoice(dmap);
   }
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading data for the chosen site is this effect's job
     loadInvoices(siteId, subProjectId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId, subProjectId]);
 
   const selectedSite = sites.find((s) => s.site_id === siteId);

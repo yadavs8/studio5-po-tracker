@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { countsAsBilled } from '@/lib/statement';
+import { resolveGst } from '@/lib/money';
 import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
 import { formatINR, formatDate } from '@/lib/format';
@@ -365,6 +366,16 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
     if (!row) return;
     const dateKey = ['po_date', 'pi_date', 'invoice_date', 'payment_date'].find((k) => k in form);
     if (dateKey && form[dateKey] !== String(row[dateKey] ?? '') && !confirmBeforeStart(form[dateKey], cfg.label.toLowerCase())) return;
+    // Invoice amounts follow the GST rule (decision 0004): with GST filled in, the total is taxable + GST;
+    // with GST blank, GST is worked out from the total. Checked before any file is uploaded.
+    let invoiceAmounts: { taxable: number; gst: number; gross: number } | null = null;
+    if (kind === 'invoice') {
+      const num = (k: string) => (form[k] ?? '').trim() === '' ? null : Number(form[k]);
+      const gstBlank = (form.gst_amount ?? '').trim() === '';
+      const r = resolveGst(num('taxable_value'), gstBlank ? null : num('gst_amount'), gstBlank ? num('gross_invoice_value') : null);
+      if (!r.ok) { setSaveError(r.error); return; }
+      invoiceAmounts = r;
+    }
     setSubmitting(true);
     setSaveError(null);
     let newDocId: string | null = null;
@@ -384,6 +395,12 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
       if (original == null && raw === '') continue;
       const value = typeof original === 'number' ? (raw === '' ? null : Number(raw)) : (raw === '' ? null : raw);
       if (String(original ?? '') !== String(value ?? '')) patch[key] = value;
+    }
+    if (invoiceAmounts) {
+      const amounts = { taxable_value: invoiceAmounts.taxable, gst_amount: invoiceAmounts.gst, gross_invoice_value: invoiceAmounts.gross };
+      for (const [k, v] of Object.entries(amounts)) {
+        if (Number(row[k] ?? NaN) !== v) patch[k] = v; else delete patch[k];
+      }
     }
     const oldDocId = row.document_id as string | null;
     if (newDocId) patch.document_id = newDocId;
@@ -454,7 +471,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                 <FieldInput label="Invoice Date" type="date" value={form.invoice_date ?? ''} onChange={set('invoice_date')} />
                 <FieldInput label="Taxable Value" type="number" value={form.taxable_value ?? ''} onChange={set('taxable_value')} />
                 <FieldInput label="GST Amount" type="number" value={form.gst_amount ?? ''} onChange={set('gst_amount')} />
-                <FieldInput label="Gross Invoice Value" type="number" value={form.gross_invoice_value ?? ''} onChange={set('gross_invoice_value')} />
+                <FieldInput label="Invoice total (used only when GST is blank)" type="number" value={form.gross_invoice_value ?? ''} onChange={set('gross_invoice_value')} />
                 <FieldInput label="Due Date" type="date" value={form.due_date ?? ''} onChange={set('due_date')} />
                 <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
                   { value: 'draft', label: 'Draft' }, { value: 'issued', label: 'Issued' }, { value: 'partially_settled', label: 'Partially Settled' },

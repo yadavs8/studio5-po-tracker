@@ -54,7 +54,7 @@ Status: done
 Files: `src/lib/money.ts`, `src/lib/validation.ts`, `src/lib/validation.test.ts`, `src/app/invoices/page.tsx`, `src/app/po-pi/page.tsx`, `src/app/site/page.tsx`, `src/app/upload/page.tsx`
 Done when: GST rule per ADR 0004 in every invoice form (H13); TDS date defaults to invoice date (M3, ADR 0007); "Mark released" on pending holds (M2, ADR 0005); shared zod schemas validate PO / PI / invoice / payment forms including upload (M15), with unit tests.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U8 — Pagination: remove 1000-row truncation
 

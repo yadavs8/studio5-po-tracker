@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
+import { check, poInput, piInput } from '@/lib/validation';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -233,8 +233,8 @@ function NewPoForm({
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (!poNumber.trim() || !poDate || !totalValue) return;
-    if (!confirmBeforeStart(poDate, 'PO')) return;
+    const c = check(poInput, { po_number: poNumber, po_date: poDate, total_value_with_gst: totalValue });
+    if (!c.ok) { setErr(c.error); return; }
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -243,10 +243,10 @@ function NewPoForm({
       document_id: documentId,
       site_id: siteId,
       sub_project_id: subProjectId,
-      po_number: poNumber.trim(),
-      po_date: poDate,
+      po_number: c.data.po_number,
+      po_date: c.data.po_date,
       scope_description: scope.trim() || null,
-      total_value_with_gst: Number(totalValue),
+      total_value_with_gst: c.data.total_value_with_gst,
       status: 'active',
     });
     setSubmitting(false);
@@ -290,8 +290,8 @@ function NewPiForm({
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (!piNumber.trim() || !piDate || !amount) return;
-    if (!confirmBeforeStart(piDate, 'PI')) return;
+    const c = check(piInput, { pi_number: piNumber, pi_date: piDate, amount });
+    if (!c.ok) { setErr(c.error); return; }
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -301,9 +301,9 @@ function NewPiForm({
       site_id: siteId,
       sub_project_id: subProjectId,
       po_id: poId || null,
-      pi_number: piNumber.trim(),
-      pi_date: piDate,
-      amount: Number(amount),
+      pi_number: c.data.pi_number,
+      pi_date: c.data.pi_date,
+      amount: c.data.amount,
       subject: subject.trim() || null,
       remarks: remarks.trim() || null,
       status: 'draft',

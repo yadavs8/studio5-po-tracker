@@ -1,3 +1,12 @@
+/** True for a real calendar date written YYYY-MM-DD (rejects 2026-02-30, 2026-13-01 …). */
+export function isRealDate(d: string | null | undefined): d is string {
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const [y, m, day] = d.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, day));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === day;
+}
+
+
 export function formatINR(amount: number | null | undefined): string {
   if (amount === null || amount === undefined) return '—';
   return new Intl.NumberFormat('en-IN', {

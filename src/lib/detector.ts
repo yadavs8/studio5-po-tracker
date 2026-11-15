@@ -1,6 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import type { UploadDocType } from '@/lib/documents';
 import type { Extracted } from '@/lib/extractApi';
+import { isRealDate } from '@/lib/format';
+
+export { isRealDate };
 
 export interface SiteMeta {
   site_id: string;
@@ -37,14 +40,6 @@ export interface ExistingRecord {
   taxable: number | null;
   gst: number | null;
   document_id: string | null;
-}
-
-/** True for a real calendar date written YYYY-MM-DD (rejects 2026-02-30, 2026-13-01 …). */
-export function isRealDate(d: string | null | undefined): d is string {
-  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-  const [y, m, day] = d.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, day));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === day;
 }
 
 /**

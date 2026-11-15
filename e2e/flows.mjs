@@ -59,6 +59,16 @@ export async function flows({ browser, BASE, OWNER, OUTSIDER, fail }) {
     await page.getByText('E2E-INV-1').first().waitFor({ timeout: 10000 });
   });
 
+  await step('an invoice with GST left blank is refused, not saved as gross = taxable', async () => {
+    await page.getByRole('button', { name: '+ Add Invoice' }).click();
+    await page.getByLabel('Invoice Number').fill('E2E-INV-NOGST');
+    await page.getByLabel('Invoice Date').fill('2026-10-06');
+    await page.getByLabel('Taxable Value').fill('100000');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText('Enter the GST amount (0 if none).').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: 'Cancel' }).click();
+  });
+
   await step('record a payment and match it to the invoice', async () => {
     await page.goto(`${BASE}/payments/`); await pickSite(page); await settle(page);
     await page.getByRole('button', { name: '+ Record Payment' }).click();

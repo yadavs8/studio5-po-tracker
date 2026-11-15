@@ -2,8 +2,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
+import { check, invoiceInput, deductionInput } from '@/lib/validation';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice, TaxInvoice, Deduction, InvoiceSettlementRow, DeductionType } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -197,8 +197,9 @@ export default function InvoicesPage() {
                           <td colSpan={7}>
                             <DeductionPanel
                               invoiceId={inv.invoice_id}
+                              invoiceDate={inv.invoice_date}
                               existing={deductionsByInvoice[inv.invoice_id] ?? []}
-                              onSaved={loadInvoices}
+                              onSaved={() => loadInvoices()}
                             />
                           </td>
                         </tr>
@@ -240,7 +241,9 @@ function NewInvoiceForm({
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const gross = (Number(taxableValue) || 0) + (Number(gstAmount) || 0);
+  // GST rule (decision 0004) and the shared checks: blank GST is refused here (there is no total to work it out from).
+  const checked = check(invoiceInput, { invoice_number: invoiceNumber, invoice_date: invoiceDate, taxable_value: taxableValue, gst_amount: gstAmount, total: '' });
+  const gross = checked.ok ? checked.data.gross_invoice_value : (Number(taxableValue) || 0) + (Number(gstAmount) || 0);
   // "Left to bill" for the chosen PO; kept with the PO it belongs to, so a stale figure never shows.
   const [poLeftFor, setPoLeftFor] = useState<{ poId: string; left: number | null }>({ poId: '', left: null });
   useEffect(() => {
@@ -254,8 +257,8 @@ function NewInvoiceForm({
   const overPo = poLeft !== null && gross > poLeft + 0.5;
 
   async function submit() {
-    if (!invoiceNumber.trim() || !invoiceDate || !taxableValue) return;
-    if (!confirmBeforeStart(invoiceDate, 'tax invoice')) return;
+    if (!checked.ok) { setErr(checked.error); return; }
+    const v = checked.data;
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -265,11 +268,11 @@ function NewInvoiceForm({
       p_sub_project_id: subProjectId,
       p_po_id: poId || null,
       p_pi_id: piId || null,
-      p_invoice_number: invoiceNumber.trim(),
-      p_invoice_date: invoiceDate,
-      p_taxable: Number(taxableValue),
-      p_gst: Number(gstAmount) || 0,
-      p_gross: gross,
+      p_invoice_number: v.invoice_number,
+      p_invoice_date: v.invoice_date,
+      p_taxable: v.taxable_value,
+      p_gst: v.gst_amount,
+      p_gross: v.gross_invoice_value,
       p_document_id: documentId,
     });
     setSubmitting(false);
@@ -282,7 +285,7 @@ function NewInvoiceForm({
       <FieldInput label="Invoice Number" value={invoiceNumber} onChange={setInvoiceNumber} placeholder="e.g. S5I/24-25/022" />
       <FieldInput label="Invoice Date" type="date" value={invoiceDate} onChange={setInvoiceDate} />
       <FieldInput label="Taxable Value" type="number" value={taxableValue} onChange={setTaxableValue} />
-      <FieldInput label="GST Amount" type="number" value={gstAmount} onChange={setGstAmount} />
+      <FieldInput label="GST Amount (0 if none)" type="number" value={gstAmount} onChange={setGstAmount} />
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
       <FieldSelect label="Linked PI (optional)" value={piId} onChange={setPiId} options={pis.map((p) => ({ value: p.pi_id, label: p.pi_number }))} />
       <FieldFile onChange={setFile} />
@@ -300,10 +303,12 @@ function NewInvoiceForm({
 
 function DeductionPanel({
   invoiceId,
+  invoiceDate,
   existing,
   onSaved,
 }: {
   invoiceId: string;
+  invoiceDate: string;
   existing: Deduction[];
   onSaved: () => void;
 }) {
@@ -314,21 +319,38 @@ function DeductionPanel({
   const [dedErr, setDedErr] = useState<string | null>(null);
 
   async function submit() {
-    if (!type || !amount) { setDedErr('Please choose the type and enter the amount.'); return; }
+    const c = check(deductionInput, { deduction_type: type, amount });
+    if (!c.ok) { setDedErr(c.error); return; }
     setSubmitting(true);
     setDedErr(null);
     const { error: dedError } = await supabase.from('deduction').insert({
       invoice_id: invoiceId,
-      deduction_type: type,
-      amount: Number(amount),
+      deduction_type: c.data.deduction_type,
+      amount: c.data.amount,
       category_note: note.trim() || null,
       status: 'pending',
+      // Dated like the invoice, so TDS lands in the invoice's financial year (decision 0007).
+      deduction_date: invoiceDate,
     });
     setSubmitting(false);
     if (dedError) { setDedErr(friendlyError(dedError)); return; }
     setType(''); setAmount(''); setNote('');
     onSaved();
   }
+
+  // Retention / handover holds: once the client pays the held money, mark it released so the
+  // release payment can be matched to this invoice (decision 0005).
+  const [releasing, setReleasing] = useState<string | null>(null);
+  async function release(d: Deduction) {
+    if (!window.confirm(`Mark ${formatINR(d.amount)} held back as released? Do this when the client has paid (or is paying) the held amount.`)) return;
+    setReleasing(d.deduction_id);
+    setDedErr(null);
+    const { error: relError } = await supabase.from('deduction').update({ status: 'released' }).eq('deduction_id', d.deduction_id);
+    setReleasing(null);
+    if (relError) { setDedErr(friendlyError(relError)); return; }
+    onSaved();
+  }
+  const isHold = (d: Deduction) => d.deduction_type === 'retention' || d.deduction_type === 'handover_hold';
 
   return (
     <div className="border-t border-b border-slate-100 bg-slate-50 px-6 py-4">
@@ -337,7 +359,15 @@ function DeductionPanel({
           {existing.map((d) => (
             <div key={d.deduction_id} className="flex justify-between font-mono text-xs">
               <span>{d.deduction_type.replace(/_/g, ' ')}{d.category_note ? ` — ${d.category_note}` : ''}</span>
-              <span>{formatINR(d.amount)} · {d.status}</span>
+              <span className="flex items-center gap-2">
+                {formatINR(d.amount)} · {d.status}
+                {isHold(d) && d.status === 'pending' && (
+                  <button onClick={() => release(d)} disabled={releasing === d.deduction_id}
+                    className="rounded border border-slate-300 bg-white px-2 py-0.5 font-sans text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                    {releasing === d.deduction_id ? 'Saving…' : 'Mark released'}
+                  </button>
+                )}
+              </span>
             </div>
           ))}
         </div>

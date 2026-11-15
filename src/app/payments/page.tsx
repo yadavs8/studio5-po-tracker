@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
+import { check, paymentInput } from '@/lib/validation';
 import type { Client, Site, Payment, InvoiceSettlementRow, PaymentType, PaymentMode } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -226,8 +226,9 @@ function NewPaymentForm({
   const left = total - matched;
 
   async function submit() {
-    if (!date || !amount) { setErr('Please enter the date and the amount received.'); return; }
-    if (!confirmBeforeStart(date, 'payment')) return;
+    const c = check(paymentInput, { payment_date: date, amount_received: amount, utr_or_reference: reference });
+    if (!c.ok) { setErr(c.error); return; }
+    if (Object.values(match).some((v) => v.trim() !== '' && !(Number(v) >= 0))) { setErr('Each amount matched to an invoice must be a plain number.'); return; }
     if (left < -0.005) { setErr('You have matched more than the amount received. Please reduce the amounts matched to invoices.'); return; }
     setSubmitting(true);
     setErr(null);
@@ -240,8 +241,8 @@ function NewPaymentForm({
     const { error } = await supabase.rpc('record_payment', {
       p_site_id: siteId,
       p_po_id: poId || null,
-      p_date: date,
-      p_amount: Number(amount),
+      p_date: c.data.payment_date,
+      p_amount: c.data.amount_received,
       p_type: type,
       p_mode: mode,
       p_reference: reference,

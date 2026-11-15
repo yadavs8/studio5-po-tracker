@@ -21,7 +21,7 @@ for (const k of ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'AGENT_EMAIL', 'AGENT_PASS
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, { auth: { persistSession: false } });
 
-import { r2, esc, unesc, ymd, linesFor, voucherXml, parseImportResult } from './voucher.js';
+import { r2, esc, unesc, linesFor, voucherXml, parseImportResult } from './voucher.js';
 
 const log = (...a) => console.log(new Date().toLocaleTimeString('en-IN'), ...a);
 
@@ -60,12 +60,14 @@ async function loadRecord(row) {
   return { type: 'deduction', deduction, invoiceNumber: inv.invoice_number, ...(await siteInfo(inv.site_id)) };
 }
 
-async function markSent(row) {
-  await sb.from('tally_sync_log').update({ sync_status: 'pushed', pushed_at: new Date().toISOString(), error_message: null }).eq('sync_id', row.sync_id);
+// Status changes go through the tally_mark() database function (migration_013): only a pending entry
+// can change, and a pushed one is final. The table itself is read-only for signed-in users.
+async function mark(row, status, msg) {
+  const { error } = await sb.rpc('tally_mark', { p_sync_id: row.sync_id, p_status: status, p_error: msg ? String(msg).slice(0, 500) : null });
+  if (error) log('Could not record the result in the tracker:', error.message);
 }
-async function markFailed(row, msg) {
-  await sb.from('tally_sync_log').update({ sync_status: 'failed', error_message: String(msg).slice(0, 500) }).eq('sync_id', row.sync_id);
-}
+const markSent = (row) => mark(row, 'pushed', null);
+const markFailed = (row, msg) => mark(row, 'failed', msg);
 
 // ------------------------------------------------------------------ one pass
 async function runOnce() {

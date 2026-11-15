@@ -1,6 +1,6 @@
 <!-- BEGIN:nextjs-agent-rules -->
 
-# This is NOT the Next.js you know
+## This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 
@@ -58,3 +58,37 @@ relevant to the task at hand — never auto-dump the whole store; keep context l
 - `.rea/` format spec → `core/rea-schema.md`
 - Project memory → `.rea/` (`knowledge/` · `decisions/` · `sessions/` · `plans/`)
 <!-- readev-tools:end -->
+
+# Studio5 PO Tracker — project rules
+
+## What it is
+Tracks every Studio5 site: purchase orders, proforma invoices, tax invoices, money received,
+deductions (TDS / retention) and progress. Business rules: `PROJECT_RULES.md`. Decisions: `.rea/decisions/`.
+
+## Tech stack
+- Next.js 16 (App Router) as a **static export** on GitHub Pages (`basePath: /studio5-po-tracker`). No server code.
+- Supabase (Postgres + Auth + Storage), called from the browser with the publishable key.
+- Tailwind 4, lucide-react, zod. Tests: vitest, SQL tests against a local Supabase, Playwright.
+
+## Architecture rules
+- **Postgres is the security boundary.** Every Studio5 table has RLS plus the restrictive `p_staff_only`
+  policy (`is_staff()`, migration_013). Never loosen a policy to make something work; add a staff-checked
+  `SECURITY DEFINER` function with `set search_path = public` instead.
+- **The Supabase project is shared with other apps** (doc generator, kharcha/trips). Never touch their tables or buckets.
+- **Money totals live in SQL views** (`v_po_summary`, `v_invoice_settlement`, `v_site_dashboard`…); pages read them.
+  Cancelled/draft invoices never count as billed; each rupee received is counted once.
+- **Schema changes = a new `supabase/migration_NNN_*.sql`**, idempotent, wrapped in a transaction, with a header
+  (why, what, how to run, rollback). Never edit an applied migration. Production is migrated by hand.
+- Amounts in `numeric(14,2)`; client-side money math goes through `src/lib/money.ts` (paise). GST rule: decision 0004.
+- Dates: `YYYY-MM-DD` values are calendar days; show/age them with `src/lib/format.ts` (IST).
+- Whole-table reads go through `src/lib/fetchAll.ts` (PostgREST returns at most 1000 rows).
+- Every Supabase call checks `error`; show people `friendlyError()` (`src/lib/plain.ts`).
+
+## File structure
+- `src/app/*` pages · `src/lib/*` shared logic (tested) · `src/components/*`
+- `supabase/studio5_schema.sql` + `migration_002…` = the applied chain · `supabase/tests/*.sql` · `supabase/archive/` (never run)
+- `tally-agent/` Tally sync agent (runs on the owner's PC) · `e2e/` browser tests · `scripts/` local tools
+
+## Commands
+- `npm run dev` · `npm run build` · `npm run lint` · `npm run typecheck` · `npm test`
+- Local DB tests: `npx supabase --workdir test/supabase start`, then `npm run test:db` and `npm run test:e2e`

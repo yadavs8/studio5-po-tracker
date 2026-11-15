@@ -75,7 +75,7 @@ Status: done
 Files: `package.json`, `package-lock.json`, `eslint.config.mjs`, `scripts/*`, `tally-agent/agent.js`, `src/lib/utils.ts`, `src/lib/supabase.ts`, `.github/workflows/pages.yml`, `README.md`, `.env.example`, `AGENTS.md` (outside managed blocks), `CLAUDE.md` (remove the duplicate import outside the readev-tools markers)
 Done when: `npm run lint` 0 errors / 0 warnings (H10, L9, L15); unused deps removed, `next` bumped, `xlsx` from SheetJS CDN, `npm audit` has no critical/high that applies to shipped code (H11, L6, L7); CI gate includes lint; cookie scoped per ADR 0008 (M8); README + `.env.example` + AGENTS.md project sections accurate (M19, L10).
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U11 — Verify: full suite, browser re-test, security re-scan, audit statuses, ship
 

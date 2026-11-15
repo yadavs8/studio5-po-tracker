@@ -9,9 +9,10 @@ import { formatINR, formatDate } from '@/lib/format';
 import { ErrorBanner, EmptyState } from '@/lib/ui';
 import { documentUrl } from '@/lib/documents';
 import { inPeriod, loadBroughtForward, REPORTING_START, REPORTING_START_LABEL, type BroughtForward } from '@/lib/period';
+import { statementFigures } from '@/lib/statement';
 
 interface Po { po_id: string; po_number: string; po_date: string; scope_description: string | null; po_value: number; invoiced: number; received_bank: number; tds_and_other_deductions: number; retention_pending: number; balance_against_po: number; }
-interface Inv { invoice_id: string; po_id: string | null; sub_project_id: string | null; invoice_number: string; invoice_date: string; taxable_value: number; gst_amount: number | null; gross_invoice_value: number; }
+interface Inv { invoice_id: string; po_id: string | null; sub_project_id: string | null; invoice_number: string; invoice_date: string; taxable_value: number; gst_amount: number | null; gross_invoice_value: number; status: string; }
 interface Settle { invoice_id: string; total_payments_allocated: number; total_deducted: number; remaining_balance: number; }
 interface Pay { payment_id: string; po_id: string | null; payment_date: string; amount_received: number; payment_type: string; utr_or_reference: string | null; remarks: string | null; }
 interface Alloc { payment_id: string; amount_allocated: number; }
@@ -53,7 +54,7 @@ function StatementPageInner() {
       const q = await Promise.all([
         supabase.from('site').select('site_name, client:client_id(display_name)').eq('site_id', id).single(),
         supabase.from('v_po_summary').select('*').eq('site_id', id).order('po_date'),
-        supabase.from('tax_invoice').select('invoice_id,po_id,sub_project_id,invoice_number,invoice_date,taxable_value,gst_amount,gross_invoice_value').eq('site_id', id).order('invoice_date'),
+        supabase.from('tax_invoice').select('invoice_id,po_id,sub_project_id,invoice_number,invoice_date,taxable_value,gst_amount,gross_invoice_value,status').eq('site_id', id).order('invoice_date'),
         supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,total_deducted,remaining_balance').eq('site_id', id),
         supabase.from('payment').select('payment_id,po_id,payment_date,amount_received,payment_type,utr_or_reference,remarks').eq('site_id', id).order('payment_date'),
         supabase.from('sub_project').select('sub_project_id,name').eq('site_id', id),
@@ -87,37 +88,13 @@ function StatementPageInner() {
   }, [id]);
 
   const poNo = (poId: string | null) => allPos.find((p) => p.po_id === poId)?.po_number ?? '—';
-  const pos = allPos.filter((p) => inPeriod(p.po_date));
-  const invs = allInvs.filter((i) => inPeriod(i.invoice_date));
-  const pays = allPays.filter((p) => inPeriod(p.payment_date));
+  // Cancelled / draft invoices are left out; each rupee received is counted once (see lib/statement.ts).
+  const { pos, invs, pays, noPoInvs, noPo, unassigned, bf: b, hasBf, totals } = statementFigures({
+    pos: allPos, invs: allInvs, settle, deds, pays: allPays, allocByPay, bf,
+  });
   const pis = allPis.filter((p) => inPeriod(p.pi_date));
-  const hidden = (allPos.length - pos.length) + (allInvs.length - invs.length) + (allPays.length - pays.length) + (allPis.length - pis.length);
-
-  // ---- Table 1: PO-wise account statement -----------------------------------
-  // Invoices from the period whose PO is not listed (no PO, or a PO dated
-  // before the cut-off) are summed in one row, like invoices without a PO.
-  const visiblePo = new Set(pos.map((p) => p.po_id));
-  const noPoInvs = invs.filter((i) => !i.po_id || !visiblePo.has(i.po_id));
-  const isHold = (d: Ded) => d.deduction_type === 'retention' || d.deduction_type === 'handover_hold';
-  const noPoIds = new Set(noPoInvs.map((i) => i.invoice_id));
-  const noPoDeds = deds.filter((d) => noPoIds.has(d.invoice_id));
-  const noPo = {
-    billed: sum(noPoInvs, (i) => n(i.gross_invoice_value)),
-    paid: sum(noPoInvs, (i) => n(settle[i.invoice_id]?.total_payments_allocated)),
-    tds: sum(noPoDeds.filter((d) => !isHold(d)), (d) => n(d.amount)),
-    held: sum(noPoDeds.filter((d) => isHold(d) && d.status === 'pending'), (d) => n(d.amount)),
-    left: sum(noPoInvs, (i) => n(settle[i.invoice_id]?.remaining_balance ?? i.gross_invoice_value)),
-  };
-  const b = bf ?? { billed: 0, received: 0, tax: 0, held: 0, receivedSince: 0, balance: 0 };
-  const hasBf = Math.abs(b.billed) + Math.abs(b.received) + Math.abs(b.tax) > 0.5;
-  const totals = {
-    po: sum(pos, (p) => n(p.po_value)),
-    billed: sum(pos, (p) => n(p.invoiced)) + noPo.billed + b.billed,
-    received: sum(pos, (p) => n(p.received_bank)) + noPo.paid + b.received + b.receivedSince,
-    tds: sum(pos, (p) => n(p.tds_and_other_deductions)) + noPo.tds + b.tax,
-    held: sum(pos, (p) => n(p.retention_pending)) + noPo.held + b.held,
-    balance: sum(pos, (p) => n(p.balance_against_po)) + noPo.left + b.balance,
-  };
+  const hidden = allPos.filter((p) => !inPeriod(p.po_date)).length + allInvs.filter((i) => !inPeriod(i.invoice_date)).length
+    + allPays.filter((p) => !inPeriod(p.payment_date)).length + allPis.filter((p) => !inPeriod(p.pi_date)).length;
   const bfLabel = `Brought forward — everything before ${REPORTING_START_LABEL}`;
 
   // ---- Table 2: proforma invoices -------------------------------------------
@@ -169,7 +146,11 @@ function StatementPageInner() {
       ...(hasBf ? [['', bfLabel, '', `before ${formatDate(REPORTING_START)}`, '', b.billed, b.received + b.receivedSince, b.tax, b.held, b.balance]] : []),
       ...pos.map((p, i) => [i + 1, p.scope_description ?? '', p.po_number, formatDate(p.po_date), n(p.po_value), n(p.invoiced), n(p.received_bank), n(p.tds_and_other_deductions), n(p.retention_pending), n(p.balance_against_po)]),
       ...(noPoInvs.length ? [['', 'Invoices not linked to a PO listed here', '', '', '', noPo.billed, noPo.paid, noPo.tds, noPo.held, noPo.left]] : []),
-      ['', 'TOTAL', '', '', totals.po, totals.billed, totals.received, totals.tds, totals.held, totals.balance],
+      ...(unassigned > 0.5 ? [['', 'Money received, not yet matched to an invoice or PO', '', '', '', '', unassigned, '', '', '']] : []),
+      ['', 'TOTAL', '', '', totals.po, totals.billed, totals.received, totals.tds, totals.held, ''],
+      ['', 'Balance still to receive on the POs above', '', '', '', '', '', '', '', totals.balanceOnPos],
+      ...(noPoInvs.length ? [['', 'Still owed on invoices not linked to a PO', '', '', '', '', '', '', '', totals.balanceNoPo]] : []),
+      ...(hasBf ? [['', `Still to receive on work before ${REPORTING_START_LABEL}`, '', '', '', '', '', '', '', totals.balanceBroughtForward]] : []),
     ];
     const sPi: (string | number)[][] = [...head.slice(0, 3).map((h) => [h]), ['Proforma invoices (not counted in the balances)'], [],
       ['S.N.', 'Particulars', 'PI No.', 'Dated', 'For PO / sub-project', 'PI amount', 'Work status / note', 'Status'],
@@ -251,10 +232,29 @@ function StatementPageInner() {
                   <C r>{formatINR(noPo.billed)}</C><C r>{formatINR(noPo.paid)}</C><C r>{formatINR(noPo.tds)}</C><C r>{formatINR(noPo.held)}</C><C r bold>{formatINR(noPo.left)}</C>
                 </tr>
               )}
+              {unassigned > 0.5 && (
+                <tr className="bg-amber-50/60">
+                  <C> </C><C>Money received, not yet matched to an invoice or PO</C><C> </C><C> </C><C r> </C>
+                  <C r> </C><C r>{formatINR(unassigned)}</C><C r> </C><C r> </C><C r> </C>
+                </tr>
+              )}
               <tr className="bg-slate-100 font-semibold">
                 <C> </C><C bold>TOTAL</C><C> </C><C> </C><C r bold>{formatINR(totals.po)}</C><C r bold>{formatINR(totals.billed)}</C>
-                <C r bold>{formatINR(totals.received)}</C><C r bold>{formatINR(totals.tds)}</C><C r bold>{formatINR(totals.held)}</C><C r bold>{formatINR(totals.balance)}</C>
+                <C r bold>{formatINR(totals.received)}</C><C r bold>{formatINR(totals.tds)}</C><C r bold>{formatINR(totals.held)}</C><C r> </C>
               </tr>
+              <tr className="bg-slate-50">
+                <C> </C><C bold>Balance still to receive on the POs above</C><C> </C><C> </C><C r> </C><C r> </C><C r> </C><C r> </C><C r> </C><C r bold>{formatINR(totals.balanceOnPos)}</C>
+              </tr>
+              {noPoInvs.length > 0 && (
+                <tr className="bg-slate-50">
+                  <C> </C><C bold>Still owed on invoices not linked to a PO</C><C> </C><C> </C><C r> </C><C r> </C><C r> </C><C r> </C><C r> </C><C r bold>{formatINR(totals.balanceNoPo)}</C>
+                </tr>
+              )}
+              {hasBf && (
+                <tr className="bg-slate-50">
+                  <C> </C><C bold>Still to receive on work before {REPORTING_START_LABEL}</C><C> </C><C> </C><C r> </C><C r> </C><C r> </C><C r> </C><C r> </C><C r bold>{formatINR(totals.balanceBroughtForward)}</C>
+                </tr>
+              )}
             </tbody>
           </table>
           {noPoInvs.length > 0 && <p className="mt-1 text-[11px] text-slate-500">For invoices that are not linked to a PO there is nothing to measure against, so the last column is simply what the client still owes on those invoices (held-back amounts are shown in their own column, not counted as owed).</p>}

@@ -62,11 +62,24 @@ async function loadRecord(row) {
 
 // Status changes go through the tally_mark() database function (migration_013): only a pending entry
 // can change, and a pushed one is final. The table itself is read-only for signed-in users.
+// If Tally accepted a voucher but the tracker cannot be told, the entry would stay "pending" and be
+// posted AGAIN on the next pass. So that case stops the agent instead (StopAgent).
+class StopAgent extends Error {}
 async function mark(row, status, msg) {
-  const { error } = await sb.rpc('tally_mark', { p_sync_id: row.sync_id, p_status: status, p_error: msg ? String(msg).slice(0, 500) : null });
-  if (error) log('Could not record the result in the tracker:', error.message);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error } = await sb.rpc('tally_mark', { p_sync_id: row.sync_id, p_status: status, p_error: msg ? String(msg).slice(0, 500) : null });
+    if (!error) return true;
+    log(`Could not record the result in the tracker (try ${attempt}/3):`, error.message);
+    await new Promise((r) => setTimeout(r, 2000 * attempt));
+  }
+  return false;
 }
-const markSent = (row) => mark(row, 'pushed', null);
+async function markSent(row, label) {
+  if (!(await mark(row, 'pushed', null))) {
+    throw new StopAgent(`${label} WAS posted to Tally, but the tracker could not be updated. Stopping so it is not posted twice. `
+      + 'Check the agent login is in public.staff, then mark this entry as sent before restarting.');
+  }
+}
 const markFailed = (row, msg) => mark(row, 'failed', msg);
 
 // ------------------------------------------------------------------ one pass
@@ -105,8 +118,9 @@ async function runOnce() {
       const missing = [...new Set(lines.map((l) => l.ledger))].filter((n) => !known.has(n.toLowerCase()));
       if (missing.length) { const m = `Ledger "${missing.join('", "')}" not found in Tally. Create it in Tally (or fix the name on the Tally page), then press Try again.`; log('FAILED', label, m); await markFailed(row, m); continue; }
       const result = parseImportResult(await tally(xml));
-      if (result.ok) { await markSent(row); log('SENT', label); } else { await markFailed(row, result.message); log('FAILED', label, result.message); }
+      if (result.ok) { await markSent(row, label); log('SENT', label); } else { await markFailed(row, result.message); log('FAILED', label, result.message); }
     } catch (e) {
+      if (e instanceof StopAgent) throw e;
       log('ERROR', row.record_type, row.record_id, e.message);
       if (LIVE) await markFailed(row, e.message);
     }
@@ -119,6 +133,10 @@ if (authErr) { console.error('Could not sign in to the tracker:', authErr.messag
 log(`Studio5 Tally agent started. ${LIVE ? 'LIVE mode.' : 'REHEARSAL mode (safe: nothing is posted).'}`);
 
 do {
-  try { await runOnce(); } catch (e) { log('Problem:', e.message); if (!POLL) process.exitCode = 1; }
+  try { await runOnce(); } catch (e) {
+    log('Problem:', e.message);
+    if (e instanceof StopAgent) process.exit(1);
+    if (!POLL) process.exitCode = 1;
+  }
   if (POLL) await new Promise((r) => setTimeout(r, POLL * 1000));
 } while (POLL);

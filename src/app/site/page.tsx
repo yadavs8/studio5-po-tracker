@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { countsAsBilled } from '@/lib/statement';
 import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
 import { friendlyError } from '@/lib/plain';
@@ -22,7 +23,7 @@ interface PoRow {
   yet_to_invoice: number; invoice_outstanding: number; balance_against_po: number;
 }
 interface PiRow { pi_id: string; po_id: string | null; pi_number: string; pi_date: string; amount: number; status: string; subject: string | null; remarks: string | null; document_id: string | null; }
-interface InvRow { invoice_id: string; po_id: string | null; invoice_number: string; invoice_date: string; gross_invoice_value: number; document_id: string | null; sub_project_id: string | null; }
+interface InvRow { invoice_id: string; po_id: string | null; invoice_number: string; invoice_date: string; gross_invoice_value: number; document_id: string | null; sub_project_id: string | null; status: string; }
 interface SettleRow { invoice_id: string; total_payments_allocated: number; total_deducted: number; remaining_balance: number; computed_status: string; }
 interface PayRow { payment_id: string; po_id: string | null; payment_date: string; amount_received: number; payment_type: string; payment_mode: string; utr_or_reference: string | null; remarks: string | null; document_id: string | null; }
 interface AllocRow { payment_id: string; invoice_id: string | null; amount_allocated: number; }
@@ -51,7 +52,7 @@ function SitePageInner() {
         supabase.from('v_site_dashboard').select('*').eq('site_id', id).maybeSingle(),
         supabase.from('v_po_summary').select('*').eq('site_id', id).order('po_date'),
         supabase.from('proforma_invoice').select('*').eq('site_id', id).order('pi_date'),
-        supabase.from('tax_invoice').select('invoice_id,po_id,invoice_number,invoice_date,gross_invoice_value,document_id,sub_project_id').eq('site_id', id).order('invoice_date'),
+        supabase.from('tax_invoice').select('invoice_id,po_id,invoice_number,invoice_date,gross_invoice_value,document_id,sub_project_id,status').eq('site_id', id).order('invoice_date'),
         supabase.from('v_invoice_settlement').select('*').eq('site_id', id),
         supabase.from('payment').select('*').eq('site_id', id).order('payment_date'),
       ]);
@@ -81,7 +82,8 @@ function SitePageInner() {
   const vPis = pis, vInvs = invs, vPays = pays, vPos = pos;
 
   const totalReceived = vPays.reduce((s, p) => s + Number(p.amount_received), 0);
-  const totalBilled = vInvs.reduce((s, i) => s + Number(i.gross_invoice_value), 0);
+  // Cancelled / draft invoices are listed (with their status) but are not bills (migration_014).
+  const totalBilled = vInvs.filter(countsAsBilled).reduce((s, i) => s + Number(i.gross_invoice_value), 0);
   const sumPo = (k: keyof PoRow) => vPos.reduce((s, p) => s + Number(p[k] ?? 0), 0);
 
   // receipts belonging to a PO: tagged to it, or allocated to one of its invoices

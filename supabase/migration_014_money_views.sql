@@ -6,7 +6,8 @@
 --     received on BOTH POs (and on the Account statement). Now:
 --       received on a PO = money matched to that PO's invoices
 --                        + the UNMATCHED part of payments tagged to that PO.
---     So the per-PO receipts always add up to what reached the bank.
+--     So the per-PO receipts always add up to what reached the bank. Money matched
+--     to an invoice that was later cancelled still counts as received (everywhere).
 -- C3  Cancelled and draft tax invoices were counted as billed and owed (and in
 --     the 60-day chase list). They are now left out of every total; the invoice
 --     itself still shows, with status "cancelled"/"draft" and nothing owing.
@@ -14,9 +15,11 @@
 -- Every view keeps exactly the same columns in the same order, so the pages and
 -- the views built on top (v_site_dashboard, v_data_health, v_todo…) keep working.
 -- Safe to run again. Run after migration_013.
--- ROLLBACK: re-run the view definitions from migration_003.sql (v_normal_outstanding,
--- v_invoice_settlement), migration_004.sql (v_po_summary), migration_002.sql
--- (v_site_dashboard) and studio5_schema.sql (v_retention_outstanding).
+-- ROLLBACK (in this order, in one transaction): the create-or-replace view blocks for
+-- v_invoice_settlement and v_normal_outstanding from migration_003.sql, v_retention_outstanding
+-- from studio5_schema.sql, v_site_dashboard from migration_002.sql, v_po_summary from
+-- migration_004.sql; then `alter view … set (security_invoker = true)` on each. Column lists
+-- are unchanged, so the dependent views need nothing.
 -- ============================================================================
 
 begin;
@@ -55,26 +58,40 @@ left join (
     group by invoice_id
 ) ded on ded.invoice_id = ti.invoice_id;
 
--- Per-site billed / collected / outstanding: only invoices that count.
+-- Per-site billed / collected / outstanding. Billed and outstanding: only invoices that count.
+-- Collected: every rupee matched to this site's invoices — money matched to an invoice that was
+-- later cancelled is still money received (same rule as v_po_summary and the statement).
 create or replace view public.v_normal_outstanding with (security_invoker = true) as
-select ti.site_id,
-    sum(ti.gross_invoice_value) as total_invoiced,
-    sum(coalesce(alloc.total_allocated, 0)) as total_collected,
-    sum(coalesce(ded.total_deducted, 0)) as total_other_deductions,
-    sum(ti.gross_invoice_value) - sum(coalesce(alloc.total_allocated, 0)) - sum(coalesce(ded.total_deducted, 0)) as normal_outstanding
-from public.tax_invoice ti
-left join (
-    select invoice_id, sum(amount_allocated) as total_allocated
-    from public.payment_allocation group by invoice_id
-) alloc on alloc.invoice_id = ti.invoice_id
-left join (
-    select invoice_id, sum(amount) as total_deducted
-    from public.deduction
-    where not (deduction_type in ('retention','handover_hold') and status = 'released')
-    group by invoice_id
-) ded on ded.invoice_id = ti.invoice_id
-where ti.status not in ('cancelled', 'draft')
-group by ti.site_id;
+with live as (
+    select ti.site_id,
+        sum(ti.gross_invoice_value) as total_invoiced,
+        sum(coalesce(alloc.total_allocated, 0)) as live_collected,
+        sum(coalesce(ded.total_deducted, 0)) as total_other_deductions
+    from public.tax_invoice ti
+    left join (
+        select invoice_id, sum(amount_allocated) as total_allocated
+        from public.payment_allocation group by invoice_id
+    ) alloc on alloc.invoice_id = ti.invoice_id
+    left join (
+        select invoice_id, sum(amount) as total_deducted
+        from public.deduction
+        where not (deduction_type in ('retention','handover_hold') and status = 'released')
+        group by invoice_id
+    ) ded on ded.invoice_id = ti.invoice_id
+    where ti.status not in ('cancelled', 'draft')
+    group by ti.site_id
+),
+collected as (
+    select ti.site_id, sum(pa.amount_allocated) as total_collected
+    from public.payment_allocation pa join public.tax_invoice ti on ti.invoice_id = pa.invoice_id
+    group by ti.site_id
+)
+select coalesce(l.site_id, c.site_id) as site_id,
+    coalesce(l.total_invoiced, 0) as total_invoiced,
+    coalesce(c.total_collected, 0) as total_collected,
+    coalesce(l.total_other_deductions, 0) as total_other_deductions,
+    coalesce(l.total_invoiced, 0) - coalesce(l.live_collected, 0) - coalesce(l.total_other_deductions, 0) as normal_outstanding
+from live l full join collected c on c.site_id = l.site_id;
 
 create or replace view public.v_retention_outstanding with (security_invoker = true) as
 select ti.site_id,

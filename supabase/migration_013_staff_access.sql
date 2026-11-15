@@ -7,9 +7,9 @@
 --
 -- WHAT IT DOES (only ever narrows access; touches no other app's tables):
 --   1. public.staff allow-list + public.is_staff().
---   2. Enrols the auth users that exist right now (production: the owner, who is
---      also the Tally agent login). It ABORTS rather than lock everyone out, and
---      aborts if there are suspiciously many users (enrol those by hand instead).
+--   2. Enrols ONLY the confirmed accounts whose emails you list in the setting
+--      studio5.staff_emails (see RUN below). Nobody else on the shared project
+--      becomes staff by accident. It ABORTS rather than leave the list empty.
 --   3. A RESTRICTIVE policy is_staff() on every Studio5 table (ANDed with the
 --      existing policies, so nothing gets wider).
 --   4. studio5-documents bucket: staff only, 25 MB, allowed file types; files can
@@ -20,8 +20,11 @@
 --   6. Inserts into money tables are audited too.
 --   7. Trigger functions can no longer be called through /rest/v1/rpc.
 --
--- RUN: once, in the SQL editor, AFTER checking `select email from auth.users;`
--- lists only people who should have access. Safe to run again (idempotent).
+-- RUN: once, in the SQL editor. Put this line FIRST, with your own login email(s),
+-- comma-separated (they are not stored in this file because the repo is public):
+--     set studio5.staff_emails = 'you@example.com, tally-agent@example.com';
+-- then paste the rest of this file below it and run both together.
+-- Safe to run again (idempotent); once someone is staff the setting is not needed.
 -- ADD SOMEONE LATER:  insert into public.staff (user_id, note)
 --                     select id, 'name' from auth.users where email = '…';
 -- ROLLBACK (restores the old, open access — only if something is badly wrong):
@@ -53,23 +56,26 @@ $$;
 revoke execute on function public.is_staff() from public, anon;
 grant  execute on function public.is_staff() to authenticated;
 
--- 2. Enrol current users, with lock-out guards --------------------------------
+-- 2. Enrol the listed people, with lock-out guards ----------------------------
 do $$
-declare n_users int; n_staff int;
+declare v_list text := nullif(btrim(current_setting('studio5.staff_emails', true)), '');
+        v_wanted text[]; v_missing text;
 begin
-  select count(*) into n_users from auth.users;
-  select count(*) into n_staff from public.staff;
-  if n_staff = 0 then
-    if n_users > 5 then
-      raise exception 'migration_013: % auth users exist. Enrol the Studio5 people by hand (see header) and run again.', n_users;
+  if v_list is not null then
+    v_wanted := array(select lower(btrim(e)) from unnest(string_to_array(v_list, ',')) e where btrim(e) <> '');
+    select string_agg(w, ', ') into v_missing from unnest(v_wanted) w
+     where not exists (select 1 from auth.users u where lower(u.email) = w
+                         and u.email_confirmed_at is not null and not coalesce(u.is_anonymous, false));
+    if v_missing is not null then
+      raise exception 'migration_013: no confirmed login found for: %. Create / confirm it under Authentication → Users first.', v_missing;
     end if;
     insert into public.staff (user_id, note)
-    select id, 'enrolled by migration_013: ' || coalesce(email, '?') from auth.users
+    select u.id, 'enrolled by migration_013: ' || u.email from auth.users u
+     where lower(u.email) = any(v_wanted)
     on conflict do nothing;
-    raise notice 'migration_013 enrolled: %', (select string_agg(coalesce(email, id::text), ', ') from auth.users);
   end if;
-  if n_users > 0 and not exists (select 1 from public.staff) then
-    raise exception 'migration_013: refusing to leave the staff list empty (everyone would be locked out).';
+  if exists (select 1 from auth.users) and not exists (select 1 from public.staff) then
+    raise exception 'migration_013: the staff list would be empty and everyone would be locked out. Put  set studio5.staff_emails = ''you@example.com'';  first and run again.';
   end if;
 end $$;
 
@@ -117,6 +123,15 @@ returns uuid language plpgsql security definer set search_path = public as $$
 declare v_id uuid; v_voucher text;
 begin
   if not public.is_staff() then raise exception 'Only Studio5 staff can send entries to Tally.'; end if;
+  if p_record_type = 'invoice' then
+    if not exists (select 1 from tax_invoice where invoice_id = p_record_id and status not in ('cancelled', 'draft')) then
+      raise exception 'That tax invoice does not exist, or is cancelled / a draft, so it cannot go to Tally.';
+    end if;
+  elsif p_record_type = 'payment' then
+    if not exists (select 1 from payment where payment_id = p_record_id) then raise exception 'That payment does not exist.'; end if;
+  elsif not exists (select 1 from deduction where deduction_id = p_record_id and deduction_type in ('tds', 'gst_tds')) then
+    raise exception 'Only TDS deductions can go to Tally.';
+  end if;
   select sync_id into v_id from tally_sync_log
    where record_type = p_record_type and record_id = p_record_id and sync_status <> 'failed';
   if v_id is not null then return v_id; end if;   -- already queued or sent: never twice

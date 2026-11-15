@@ -43,6 +43,11 @@ create or replace function public.fn_integrity() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_site uuid; v_gross numeric; v_alloc numeric; v_ded numeric; v_amt numeric; v_pay_site uuid; v_inv_site uuid;
 begin
+  -- This function can see every row, so it must not answer people who are not staff (its error
+  -- messages would reveal balances). The SQL editor / service role has no auth.uid() and passes.
+  if auth.uid() is not null and not public.is_staff() then
+    raise exception 'Not allowed.' using errcode = '42501';
+  end if;
   if tg_table_name in ('tax_invoice','proforma_invoice','purchase_order') then
     if tg_table_name <> 'purchase_order' and new.po_id is not null then
       select site_id into v_site from purchase_order where po_id = new.po_id;
@@ -122,9 +127,34 @@ begin
   return new;
 end $$;
 
--- fn_tally_lock must also see the whole queue, whoever is signed in.
-alter function public.fn_tally_lock()          security definer;
-alter function public.fn_tally_lock()          set search_path = public;
+-- Tally lock: once a record is in Tally (or queued), nothing Tally holds may change here —
+-- now also status (cancelling it would drop it from every total), dates and the PO link,
+-- and TDS deductions are locked too. It sees the whole queue whoever is signed in.
+create or replace function public.fn_tally_lock() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_type sync_record_type; v_id uuid; v_changed boolean := false; v_what text;
+begin
+  if tg_table_name = 'tax_invoice' then
+    v_type := 'invoice'; v_id := old.invoice_id; v_what := 'invoice';
+    if tg_op = 'DELETE' then v_changed := true;
+    else v_changed := (new.invoice_number, new.invoice_date, new.taxable_value, new.gst_amount, new.gross_invoice_value, new.site_id, new.po_id, new.status)
+                      is distinct from (old.invoice_number, old.invoice_date, old.taxable_value, old.gst_amount, old.gross_invoice_value, old.site_id, old.po_id, old.status); end if;
+  elsif tg_table_name = 'payment' then
+    v_type := 'payment'; v_id := old.payment_id; v_what := 'payment';
+    if tg_op = 'DELETE' then v_changed := true;
+    else v_changed := (new.amount_received, new.payment_date, new.site_id) is distinct from (old.amount_received, old.payment_date, old.site_id); end if;
+  elsif tg_table_name = 'deduction' then
+    v_type := 'deduction'; v_id := old.deduction_id; v_what := 'TDS entry';
+    if tg_op = 'DELETE' then v_changed := true;
+    else v_changed := (new.amount, new.deduction_type, new.deduction_date, new.invoice_id) is distinct from (old.amount, old.deduction_type, old.deduction_date, old.invoice_id); end if;
+  end if;
+  if v_changed and exists (select 1 from tally_sync_log where record_type = v_type and record_id = v_id and sync_status in ('pushed','pending')) then
+    raise exception 'This % is already in Tally (or waiting to be sent), so it cannot be changed or deleted here. Correct it in Tally first, or add a credit/debit note.', v_what;
+  end if;
+  return case when tg_op = 'DELETE' then old else new end;
+end $$;
+drop trigger if exists trg_tally_lock on public.deduction;
+create trigger trg_tally_lock before update or delete on public.deduction for each row execute function public.fn_tally_lock();
 alter function public.fn_audit_log_immutable() set search_path = public;
 alter function public.reporting_start()        set search_path = public;
 alter function public.record_tax_invoice(uuid,uuid,uuid,uuid,text,date,numeric,numeric,numeric,uuid) set search_path = public;

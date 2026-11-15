@@ -54,6 +54,19 @@ describe('statementFigures', () => {
     expect(f.totals.received).toBe(f.bankReceived);
   });
 
+  it('counts money matched to an invoice that was later cancelled as received', () => {
+    const f = statementFigures({
+      ...base,
+      invs: [...base.invs, { invoice_id: 'i9', po_id: null, invoice_date: '2026-10-01', gross_invoice_value: 30000, status: 'cancelled' }],
+      settle: { ...base.settle, i9: { invoice_id: 'i9', total_payments_allocated: 30000, total_deducted: 0, remaining_balance: 0 } },
+      pays: [...base.pays, { payment_id: 'p3', po_id: null, payment_date: '2026-10-02', amount_received: 30000 }],
+      allocByPay: { ...base.allocByPay, p3: 30000 },
+    });
+    expect(f.invs.map((i) => i.invoice_id)).toEqual(['i1']);
+    expect(f.totals.received).toBe(130000);
+    expect(f.totals.received).toBe(f.bankReceived);
+  });
+
   it('only lists records from the reporting start', () => {
     const f = statementFigures({
       ...base,

@@ -92,6 +92,26 @@ begin
   exception when raise_exception then
     if sqlerrm like 'a pushed Tally entry could be re-opened' then raise; end if;
   end;
+  -- a queued/sent invoice cannot be cancelled or re-dated here either
+  begin
+    update public.tax_invoice set status = 'cancelled' where invoice_id = '11111111-0000-0000-0000-0000000000a1';
+    raise exception 'locked invoice could be cancelled';
+  exception when raise_exception then
+    if sqlerrm like 'locked invoice could be cancelled' then raise; end if;
+  end;
+  -- cancelled invoices and unknown records cannot be queued
+  begin
+    perform public.tally_queue('invoice', '11111111-0000-0000-0000-0000000000a2');
+    raise exception 'cancelled invoice queued for Tally';
+  exception when raise_exception then
+    if sqlerrm like 'cancelled invoice queued for Tally' then raise; end if;
+  end;
+  begin
+    perform public.tally_queue('payment', gen_random_uuid());
+    raise exception 'unknown payment queued for Tally';
+  exception when raise_exception then
+    if sqlerrm like 'unknown payment queued for Tally' then raise; end if;
+  end;
   -- and the lock still holds on the invoice
   begin
     update public.tax_invoice set gross_invoice_value = 119000, taxable_value = 101000 where invoice_id = '11111111-0000-0000-0000-0000000000a1';
@@ -99,6 +119,32 @@ begin
   exception when raise_exception then
     if sqlerrm like 'locked invoice amount could be changed' then raise; end if;
   end;
+end $$;
+-- a TDS entry that is in Tally is locked too
+do $$
+declare v_ded uuid; v_sync uuid;
+begin
+  insert into public.deduction (invoice_id, deduction_type, amount, deduction_date)
+  values ('11111111-0000-0000-0000-0000000000a1', 'tds', 2000, '2026-09-01') returning deduction_id into v_ded;
+  v_sync := public.tally_queue('deduction', v_ded);
+  begin
+    update public.deduction set amount = 1000 where deduction_id = v_ded;
+    raise exception 'queued TDS amount changed';
+  exception when raise_exception then
+    if sqlerrm = 'queued TDS amount changed' then raise; end if;
+  end;
+end $$;
+reset role;
+
+-- Outsider writes get a plain refusal, never a balance-revealing message from the integrity check.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+set local role authenticated;
+do $$ begin
+  insert into public.payment_allocation (payment_id, invoice_id, amount_allocated)
+  values ('b1111111-0000-0000-0000-000000000001', '11111111-0000-0000-0000-0000000000a1', 999999);
+  raise exception 'outsider allocation accepted';
+exception when insufficient_privilege then
+  assert sqlerrm not like '%still open%' and sqlerrm not like '%different sites%', 'integrity message leaked to an outsider: ' || sqlerrm;
 end $$;
 reset role;
 

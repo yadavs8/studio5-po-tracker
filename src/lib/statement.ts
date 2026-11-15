@@ -39,9 +39,12 @@ export function statementFigures<P extends StatementPo, I extends StatementInv, 
   const noPoInvs = invs.filter((i) => !i.po_id || !visiblePo.has(i.po_id));
   const noPoIds = new Set(noPoInvs.map((i) => i.invoice_id));
   const noPoDeds = deds.filter((d) => noPoIds.has(d.invoice_id));
+  // Money matched to a no-PO invoice that was later cancelled is still money received
+  // (v_po_summary does the same for invoices on a PO).
+  const cancelledNoPo = input.invs.filter((i) => inPeriod(i.invoice_date) && !countsAsBilled(i) && (!i.po_id || !visiblePo.has(i.po_id)));
   const noPo = {
     billed: sum(noPoInvs, (i) => n(i.gross_invoice_value)),
-    paid: sum(noPoInvs, (i) => n(settle[i.invoice_id]?.total_payments_allocated)),
+    paid: sum([...noPoInvs, ...cancelledNoPo], (i) => n(settle[i.invoice_id]?.total_payments_allocated)),
     tds: sum(noPoDeds.filter((d) => !isHold(d)), (d) => n(d.amount)),
     held: sum(noPoDeds.filter((d) => isHold(d) && d.status === 'pending'), (d) => n(d.amount)),
     left: sum(noPoInvs, (i) => n(settle[i.invoice_id]?.remaining_balance ?? i.gross_invoice_value)),

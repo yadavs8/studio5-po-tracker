@@ -52,4 +52,22 @@ begin
   select sum(received_bank) into total from public.v_po_summary where site_id = '51111111-0000-0000-0000-000000000001';
   assert total = 150000, format('per-PO receipts must add up to the 1,50,000 in the bank, got %s', total);
 end $$;
+
+-- Money matched to an invoice that was later cancelled is still money received — everywhere alike.
+do $$
+declare v_pay uuid; per_po numeric; site_collected numeric;
+begin
+  insert into public.payment (site_id, payment_date, amount_received, utr_or_reference)
+  values ('51111111-0000-0000-0000-000000000001', '2026-10-10', 50000, 'UTR-CANC') returning payment_id into v_pay;
+  insert into public.payment_allocation (payment_id, invoice_id, amount_allocated)
+  values (v_pay, '11111111-0000-0000-0000-0000000000a2', 50000);   -- INV-2, cancelled, on PO-X
+  select sum(received_bank) into per_po from public.v_po_summary where site_id = '51111111-0000-0000-0000-000000000001';
+  select total_collected into site_collected from public.v_site_dashboard where site_id = '51111111-0000-0000-0000-000000000001';
+  -- (runs after the partial-payment block above: bank now holds 1,00,000 + 50,000 + 50,000)
+  assert per_po = (select sum(amount_received) from public.payment), format('per-PO receipts must equal the bank (%s), got %s', (select sum(amount_received) from public.payment), per_po);
+  assert per_po = 200000, format('per-PO receipts should be 2,00,000, got %s', per_po);
+  -- collected = matched money: 1,00,000 + 10,000 (partial) + 50,000 (on the cancelled invoice)
+  assert site_collected = 160000, format('site collected should be 1,60,000, got %s', site_collected);
+  assert (select remaining_balance from public.v_invoice_settlement where invoice_number = 'INV-2') = 0, 'cancelled invoice owes nothing';
+end $$;
 reset role;

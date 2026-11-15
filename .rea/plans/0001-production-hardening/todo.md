@@ -5,7 +5,7 @@
 Files: `package.json`, `vitest.config.ts`, `test/supabase/supabase/config.toml`, `scripts/test-db.sh`, `supabase/tests/*.sql`, `supabase/seed_test.sql`, `supabase/migrations/*` + `supabase/seed.sql` → `supabase/archive/`, `e2e/smoke.mjs`, `.github/workflows/pages.yml`, `.env.example`, `.gitignore`
 Done when: legacy `supabase/migrations/2026*.sql` and old `seed.sql` are archived out of any auto-applied path (H9); `npm test` runs vitest; `npm run test:db` resets a **local-only** Supabase, applies the applied chain + new migrations, **re-applies every new migration a second time (idempotency)**, and runs SQL assertions; `npm run test:e2e` runs a signed-in Playwright smoke over all routes; CI runs typecheck + unit tests before the Pages build (lint joins the gate in U10 once it is clean), with Pages permissions scoped to the deploy job and actions pinned to SHAs (H12, L8, M19).
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U2 — Staff-only access: RLS + storage + audit/tally lock-down
 

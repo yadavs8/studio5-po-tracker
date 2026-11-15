@@ -57,3 +57,11 @@ scripts/query_pos.js
 
 # Tally agent
 tally-agent/node_modules
+
+# committed example env file (no secrets)
+!.env.example
+
+# local test Supabase: generated migrations and CLI state
+test/supabase/supabase/migrations/
+test/supabase/supabase/.temp/
+test/supabase/supabase/.branches/

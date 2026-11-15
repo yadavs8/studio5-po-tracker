@@ -10,6 +10,7 @@ import type { SiteDashboardRow } from '@/lib/types';
 import { formatINR } from '@/lib/format';
 import { PageHeader, ErrorBanner, EmptyState, StatTile, Panel, buttonClass } from '@/lib/ui';
 import { loadPeriodFigures, REPORTING_START_LABEL, type PeriodFigures } from '@/lib/period';
+import { isOpenPi } from '@/lib/pi';
 
 const NONE: PeriodFigures = { poValue: 0, billed: 0, received: 0, paidOn: 0, tax: 0, held: 0, waiting: 0 };
 
@@ -44,7 +45,7 @@ export default function DashboardPage() {
         if (view.error) throw new Error(view.error.message);
         const piBySite: Record<string, number> = {};
         (pis as { site_id: string; amount: number; status: string }[])
-          .filter((p) => p.status !== 'converted_to_invoice')
+          .filter((p) => isOpenPi(p.status))
           .forEach((p) => { piBySite[p.site_id] = (piBySite[p.site_id] ?? 0) + Number(p.amount); });
         const list = ((view.data ?? []) as Pick<SiteDashboardRow, 'site_id' | 'site_name' | 'client_name' | 'normal_outstanding'>[])
           .map((r): SiteRow => {

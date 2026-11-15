@@ -37,6 +37,19 @@ function wellFormed(xml) {
   const L = linesFor(rec, S);
   assert.equal(sum(L, true), sum(L, false)); assert.equal(L.length, 4); wellFormed(voucherXml(rec, S, L));
 }
+// 2b. Invoice rounded to the rupee (doc generator, migration_017): round off booked so the voucher balances
+{
+  const base = { invoice_number: 'S51/26-27/007', invoice_date: '2026-10-20', taxable_value: 1000.40, gst_amount: 180.07, gst_type: 'cgst_sgst' };
+  const down = linesFor({ type: 'invoice', site: 'X', party: 'P', invoice: { ...base, round_off: -0.47, gross_invoice_value: 1180 } }, { ...S, round_off_ledger: 'Round Off' });
+  assert.equal(sum(down, true), sum(down, false));
+  assert.deepEqual(down.at(-1), { ledger: 'Round Off', dr: true, amount: 0.47 });
+  const up = linesFor({ type: 'invoice', site: 'X', party: 'P', invoice: { ...base, taxable_value: 1000.30, gst_amount: 180.05, round_off: 0.35, gross_invoice_value: 1180.70 } }, S);
+  assert.equal(sum(up, true), sum(up, false));
+  assert.deepEqual(up.at(-1), { ledger: 'Round Off', dr: false, amount: 0.35 }); // default ledger name
+  // no round off → no extra line (every invoice entered in the tracker)
+  const none = linesFor({ type: 'invoice', site: 'X', party: 'P', invoice: { ...base, taxable_value: 100, gst_amount: 18, round_off: 0, gross_invoice_value: 118 } }, S);
+  assert.equal(none.length, 4);
+}
 // 3. Receipt: bank debit, party credit (the spec had these signs the wrong way round)
 {
   const rec = { type: 'payment', site: 'The Melia, Sohna Road', party: 'DSS Buildtech Pvt Ltd', payment: { amount_received: 2966144, payment_mode: 'bank_transfer', payment_date: '2024-10-29', utr_or_reference: 'DSS-P07', remarks: 'T-B,C,S1 (Inv 022,024,025 & 027)' } };

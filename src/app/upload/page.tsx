@@ -19,6 +19,7 @@ import { detectDocument, fromExtracted, findExistingRecord, SiteMeta, DetectedDo
 import { resolveGst } from '@/lib/money';
 import { readDocument, readableType, closeInboxItem } from '@/lib/extractApi';
 import { PageHeader, ErrorBanner, Panel, PrimaryButton, GhostButton, FieldInput, FieldSelect } from '@/lib/ui';
+import { isOpenPi } from '@/lib/pi';
 import {
   UploadCloud,
   FileCheck2,
@@ -341,8 +342,8 @@ function UploadPageInner() {
     gst.trim() === '' && amount.trim() !== '' && !Number.isNaN(totalNum) ? totalNum : null,
   );
   const invoiceTotal = gstCheck.ok ? gstCheck.gross : round2((Number.isNaN(taxableNum) ? 0 : taxableNum) + (Number.isNaN(gstNum) ? 0 : gstNum));
-  const openPis = sitePis.filter((p) => p.status !== 'converted_to_invoice');
-  const unlinkedPis = sitePis.filter((p) => !p.po_id);
+  const openPis = sitePis.filter((p) => isOpenPi(p.status));
+  const unlinkedPis = sitePis.filter((p) => !p.po_id && p.status !== 'cancelled');
 
   /** Checks the form; returns a message for the first problem, or null. */
   function problem(): string | null {

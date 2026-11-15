@@ -1,6 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import type { UploadDocType } from '@/lib/documents';
 import type { Extracted } from '@/lib/extractApi';
+import { isRealDate } from '@/lib/format';
+
+export { isRealDate };
 
 export interface SiteMeta {
   site_id: string;
@@ -59,6 +62,7 @@ export async function extractTextPreview(file: File, maxBytes = 120000): Promise
         word = '';
       }
     }
+    if (word.length >= 2) result += word; // the last run of text, if the file ends without a binary byte
     return result;
   } catch {
     return '';
@@ -82,21 +86,24 @@ export async function detectDocument(
   let docType: UploadDocType = 'other';
   let docTypeName = 'General Document';
 
+  // Most specific first: a PI or a tax invoice usually MENTIONS its PO ("Tax Invoice against PO 4500"),
+  // so the PO words only decide when no invoice word is present.
   if (/\b(?:pi|proforma|performa)\b/i.test(cleanName) || /\b(?:proforma\s*invoice)\b/i.test(fileText)) {
     docType = 'pi';
     docTypeName = 'Proforma Invoice (PI)';
-  } else if (
-    /\b(?:po|wo|purchase\s*order|work\s*order)\b/i.test(cleanName) ||
-    /\b(?:purchase\s*order|work\s*order)\b/i.test(fileText)
-  ) {
-    docType = 'po';
-    docTypeName = 'Purchase Order / Work Order';
-  } else if (
-    /\b(?:tax\s*invoice|invoice|s5i)\b/i.test(cleanName) ||
-    /\b(?:tax\s*invoice)\b/i.test(fileText)
-  ) {
+  } else if (/\b(?:tax\s*invoice|invoice|inv|s5i)\b/i.test(cleanName)) {
     docType = 'invoice';
     docTypeName = 'Tax Invoice';
+  } else if (/\b(?:po|wo|purchase\s*order|work\s*order)\b/i.test(cleanName)) {
+    docType = 'po';
+    docTypeName = 'Purchase Order / Work Order';
+  } else if (/\b(?:tax\s*invoice)\b/i.test(fileText)) {
+    // checked before the PO words in the text: an invoice's text quotes "Purchase Order No…"
+    docType = 'invoice';
+    docTypeName = 'Tax Invoice';
+  } else if (/\b(?:purchase\s*order|work\s*order)\b/i.test(fileText)) {
+    docType = 'po';
+    docTypeName = 'Purchase Order / Work Order';
   } else if (
     /\b(?:payment|advice|receipt|neft|rtgs|utr)\b/i.test(cleanName) ||
     /\b(?:payment\s*advice|payment\s*receipt)\b/i.test(fileText)
@@ -116,30 +123,22 @@ export async function detectDocument(
   // invoice number, or the author's name matching a client). Only the document-type phrases above use them.
   const nameText = fileName.replace(/\.[^.]+$/, '');
 
-  // 2. Match Client and Site
-  let matchedSite: SiteMeta | null = null;
-  let bestScore = 0;
-
-  for (const s of knownSites) {
+  // 2. Match Client and Site. A word that also appears in the client's name (e.g. "Lemon Tree") fits every
+  // site of that client, so it only breaks ties; a site-specific word ("Kochi") decides. If two sites
+  // still tie, nothing is picked — better to ask than to file under the wrong site.
+  const lowerName = cleanName.toLowerCase();
+  const words = (t: string) => t.toLowerCase().split(/[\s,\-]+/).filter((w) => w.length > 3);
+  const scored = knownSites.map((s) => {
+    const clientWords = new Set(words(s.client_name));
     let score = 0;
-    const sName = s.site_name.toLowerCase();
-    const cName = s.client_name.toLowerCase();
-
-    // Check specific keywords
-    const keywords = [
-      ...sName.split(/[\s,\-]+/).filter((w) => w.length > 3),
-      ...cName.split(/[\s,\-]+/).filter((w) => w.length > 3),
-    ];
-
-    for (const kw of keywords) {
-      if (cleanName.toLowerCase().includes(kw)) score += 5;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      matchedSite = s;
-    }
-  }
+    for (const w of words(s.site_name)) if (!clientWords.has(w) && lowerName.includes(w)) score += 5;
+    for (const w of clientWords) if (lowerName.includes(w)) score += 1;
+    return { s, score };
+  }).sort((a, b) => b.score - a.score);
+  const top = scored[0];
+  const siteSpecific = top && top.score >= 5;
+  const tied = scored.length > 1 && scored[1].score === top?.score;
+  const matchedSite: SiteMeta | null = top && siteSpecific && !tied ? top.s : null;
 
   // 3. Extract Document Number
   let docNumber = '';
@@ -176,7 +175,7 @@ export async function detectDocument(
       date = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
     }
   }
-  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) date = '';
+  if (!isRealDate(date)) date = '';
 
   // 5. Extract Amount
   let amount: number | null = null;
@@ -220,7 +219,11 @@ export async function detectDocument(
   };
 }
 
-/** Looks up a PI / PO / tax invoice with this number on this site, so a new copy can replace the old one. */
+/**
+ * Looks up a PI / PO / tax invoice with this number on this site, so a new copy can replace the old one.
+ * Matches ignoring case, like the database's unique rule (migration_015), and throws on a failed lookup
+ * so a network error is never mistaken for "no such record" (which would create a duplicate).
+ */
 export async function findExistingRecord(
   docType: UploadDocType,
   docNumber: string,
@@ -228,38 +231,46 @@ export async function findExistingRecord(
 ): Promise<ExistingRecord | null> {
   const num = docNumber.trim();
   if (!num || !siteId) return null;
+  const exact = num.replace(/[\\%_]/g, (c) => `\\${c}`); // ilike without wildcards = case-insensitive equals
+  // PostgREST also reads * as a wildcard, so every hit is re-checked: only the same number (ignoring case) counts.
+  const same = (v: string | null | undefined) => (v ?? '').trim().toLowerCase() === num.toLowerCase();
   if (docType === 'pi') {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('proforma_invoice')
       .select('pi_id, pi_number, pi_date, amount, document_id')
       .eq('site_id', siteId)
-      .eq('pi_number', num)
-      .limit(1)
+      .ilike('pi_number', exact)
       .maybeSingle();
-    return data
+    if (error) throw new Error(error.message);
+    return data && same(data.pi_number)
       ? { id: data.pi_id, table: 'proforma_invoice', number: data.pi_number, date: data.pi_date, amount: Number(data.amount), taxable: null, gst: null, document_id: data.document_id }
       : null;
   }
   if (docType === 'po') {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('purchase_order')
-      .select('po_id, po_number, po_date, total_value_with_gst, document_id')
+      .select('po_id, po_number, po_date, total_value_with_gst, taxable_value, gst_amount, document_id')
       .eq('site_id', siteId)
-      .eq('po_number', num)
-      .limit(1)
+      .ilike('po_number', exact)
       .maybeSingle();
-    return data
-      ? { id: data.po_id, table: 'purchase_order', number: data.po_number, date: data.po_date, amount: Number(data.total_value_with_gst), taxable: null, gst: null, document_id: data.document_id }
+    if (error) throw new Error(error.message);
+    return data && same(data.po_number)
+      ? {
+          id: data.po_id, table: 'purchase_order', number: data.po_number, date: data.po_date, amount: Number(data.total_value_with_gst),
+          taxable: data.taxable_value == null ? null : Number(data.taxable_value), gst: data.gst_amount == null ? null : Number(data.gst_amount),
+          document_id: data.document_id,
+        }
       : null;
   }
   if (docType === 'invoice') {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('tax_invoice')
       .select('invoice_id, invoice_number, invoice_date, taxable_value, gst_amount, gross_invoice_value, document_id')
       .eq('site_id', siteId)
-      .eq('invoice_number', num)
+      .ilike('invoice_number', exact)
       .maybeSingle();
-    return data
+    if (error) throw new Error(error.message);
+    return data && same(data.invoice_number)
       ? {
           id: data.invoice_id,
           table: 'tax_invoice',
@@ -313,11 +324,15 @@ export function fromExtracted(ex: Extracted, knownSites: SiteMeta[]): DetectedDo
   const kind = DOC_TYPE_FROM_AI[ex.document_type] ?? DOC_TYPE_FROM_AI.other;
   const site = matchSiteFromRead(ex, knownSites);
   const docNumber = (ex.document_number ?? '').trim();
-  const isDate = (d: string | null) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
-  const date = isDate(ex.document_date) ? ex.document_date! : isDate(ex.payment_date) ? ex.payment_date! : '';
+  const date = isRealDate(ex.document_date) ? ex.document_date : isRealDate(ex.payment_date) ? ex.payment_date : '';
   const amount = ex.total_amount ?? ex.payment_amount ?? null;
   const gstParts = [ex.igst_amount, ex.cgst_amount, ex.sgst_amount].filter((v): v is number => typeof v === 'number');
-  const gst = ex.gst_type === 'none' ? 0 : gstParts.length ? gstParts.reduce((a, b) => a + b, 0) : null;
+  // GST: the parts if read; 0 if the document says none; otherwise total − taxable (decision 0004),
+  // so the total that was read is never dropped.
+  let gst = ex.gst_type === 'none' ? 0 : gstParts.length ? gstParts.reduce((a, b) => a + b, 0) : null;
+  if (gst === null && ex.taxable_value != null && ex.total_amount != null && ex.total_amount >= ex.taxable_value) {
+    gst = Math.round((ex.total_amount - ex.taxable_value) * 100) / 100;
+  }
   return {
     docType: kind.docType,
     docTypeName: kind.name,

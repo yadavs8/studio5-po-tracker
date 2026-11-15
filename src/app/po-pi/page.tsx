@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
+import { check, poInput, piInput } from '@/lib/validation';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -18,7 +18,7 @@ import {
   FieldInput,
   FieldSelect,
   FieldFile, buttonClass } from '@/lib/ui';
-import { uploadDocument } from '@/lib/documents';
+import { uploadDocument, discardDocument } from '@/lib/documents';
 
 export default function PoPiPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -42,49 +42,62 @@ export default function PoPiPage() {
     });
   }, []);
 
+  // Choosing a client / site / sub-project resets what depended on the old choice, so a new PO or PI
+  // can never be saved against a site or sub-project that is no longer selected.
+  function chooseClient(id: string) {
+    setClientId(id);
+    setSites([]);
+    chooseSite('');
+  }
+  function chooseSite(id: string) {
+    setSiteId(id);
+    setSubProjectId('');
+    setSubProjects([]); setPos([]); setPis([]);
+    setShowNewPo(false); setShowNewPi(false);
+  }
+
   useEffect(() => {
-    if (!clientId) { setSites([]); setSiteId(''); return; }
+    if (!clientId) return;
+    let alive = true;
     supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data, error }) => {
+      if (!alive) return;
       if (error) setError(friendlyError(error));
       else setSites(data as Site[]);
     });
+    return () => { alive = false; };
   }, [clientId]);
 
   useEffect(() => {
-    if (!siteId) { setSubProjects([]); setSubProjectId(''); setPos([]); setPis([]); return; }
-    loadSubProjects();
-    loadPos();
-    loadPis();
-  }, [siteId]);
-
-  useEffect(() => {
-    if (siteId) { loadPos(); loadPis(); }
-  }, [subProjectId]);
-
-  function loadSubProjects() {
+    if (!siteId) return;
+    let alive = true;
     supabase.from('sub_project').select('*').eq('site_id', siteId).order('name').then(({ data, error }) => {
+      if (!alive) return;
       if (error) setError(friendlyError(error));
       else setSubProjects(data as SubProject[]);
     });
-  }
+    return () => { alive = false; };
+  }, [siteId]);
 
-  function loadPos() {
-    let q = supabase.from('purchase_order').select('*').eq('site_id', siteId);
-    q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
-    q.order('po_date', { ascending: false }).then(({ data, error }) => {
-      if (error) setError(friendlyError(error));
-      else setPos(data as PurchaseOrder[]);
-    });
+  // A reply that belongs to an earlier site / sub-project is ignored.
+  const loadSeq = useRef(0);
+  // The current choice, for reloads triggered after an await (a save) whose closure may be older.
+  const current = useRef({ siteId, subProjectId });
+  useEffect(() => { current.current = { siteId, subProjectId }; }, [siteId, subProjectId]);
+  async function loadLists(forSite = current.current.siteId, forSub = current.current.subProjectId) {
+    const seq = ++loadSeq.current;
+    if (!forSite) return;
+    let pq = supabase.from('purchase_order').select('*').eq('site_id', forSite);
+    let iq = supabase.from('proforma_invoice').select('*').eq('site_id', forSite);
+    if (forSub) { pq = pq.eq('sub_project_id', forSub); iq = iq.eq('sub_project_id', forSub); }
+    const [po, pi] = await Promise.all([pq.order('po_date', { ascending: false }), iq.order('pi_date', { ascending: false })]);
+    if (seq !== loadSeq.current) return;
+    if (po.error || pi.error) { setError(friendlyError(po.error ?? pi.error)); return; }
+    setPos(po.data as PurchaseOrder[]);
+    setPis(pi.data as ProformaInvoice[]);
   }
-
-  function loadPis() {
-    let q = supabase.from('proforma_invoice').select('*').eq('site_id', siteId);
-    q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
-    q.order('pi_date', { ascending: false }).then(({ data, error }) => {
-      if (error) setError(friendlyError(error));
-      else setPis(data as ProformaInvoice[]);
-    });
-  }
+  useEffect(() => {
+    loadLists(siteId, subProjectId);
+  }, [siteId, subProjectId]);
 
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
@@ -99,13 +112,13 @@ export default function PoPiPage() {
           <FieldSelect
             label="Client"
             value={clientId}
-            onChange={setClientId}
+            onChange={chooseClient}
             options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))}
           />
           <FieldSelect
             label="Site"
             value={siteId}
-            onChange={setSiteId}
+            onChange={chooseSite}
             options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))}
           />
           {selectedSite?.has_sub_projects && (
@@ -136,7 +149,7 @@ export default function PoPiPage() {
                   siteId={siteId}
                   subProjectId={subProjectId || null}
                   onCancel={() => setShowNewPo(false)}
-                  onCreated={() => { setShowNewPo(false); loadPos(); }}
+                  onCreated={() => { setShowNewPo(false); loadLists(); }}
                 />
               )}
               {pos.length === 0 ? (
@@ -175,7 +188,7 @@ export default function PoPiPage() {
                   subProjectId={subProjectId || null}
                   pos={pos}
                   onCancel={() => setShowNewPi(false)}
-                  onCreated={() => { setShowNewPi(false); loadPis(); }}
+                  onCreated={() => { setShowNewPi(false); loadLists(); }}
                 />
               )}
               {pis.length === 0 ? (
@@ -221,8 +234,8 @@ function NewPoForm({
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (!poNumber.trim() || !poDate || !totalValue) return;
-    if (!confirmBeforeStart(poDate, 'PO')) return;
+    const c = check(poInput, { po_number: poNumber, po_date: poDate, total_value_with_gst: totalValue });
+    if (!c.ok) { setErr(c.error); return; }
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -231,14 +244,15 @@ function NewPoForm({
       document_id: documentId,
       site_id: siteId,
       sub_project_id: subProjectId,
-      po_number: poNumber.trim(),
-      po_date: poDate,
+      po_number: c.data.po_number,
+      po_date: c.data.po_date,
       scope_description: scope.trim() || null,
-      total_value_with_gst: Number(totalValue),
+      total_value_with_gst: c.data.total_value_with_gst,
       status: 'active',
     });
     setSubmitting(false);
-    if (error) { setErr(friendlyError(error)); return; }
+    // The record was not saved, so the file uploaded for it must not linger unfiled.
+    if (error) { await discardDocument(documentId).catch(() => undefined); setErr(friendlyError(error)); return; }
     onCreated();
   }
 
@@ -277,8 +291,8 @@ function NewPiForm({
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (!piNumber.trim() || !piDate || !amount) return;
-    if (!confirmBeforeStart(piDate, 'PI')) return;
+    const c = check(piInput, { pi_number: piNumber, pi_date: piDate, amount });
+    if (!c.ok) { setErr(c.error); return; }
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -288,15 +302,16 @@ function NewPiForm({
       site_id: siteId,
       sub_project_id: subProjectId,
       po_id: poId || null,
-      pi_number: piNumber.trim(),
-      pi_date: piDate,
-      amount: Number(amount),
+      pi_number: c.data.pi_number,
+      pi_date: c.data.pi_date,
+      amount: c.data.amount,
       subject: subject.trim() || null,
       remarks: remarks.trim() || null,
       status: 'draft',
     });
     setSubmitting(false);
-    if (error) { setErr(friendlyError(error)); return; }
+    // The record was not saved, so the file uploaded for it must not linger unfiled.
+    if (error) { await discardDocument(documentId).catch(() => undefined); setErr(friendlyError(error)); return; }
     onCreated();
   }
 

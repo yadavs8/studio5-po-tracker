@@ -16,7 +16,9 @@ Studio5 Project Tracker (the **Tally** page) into Tally. One way only: tracker �
 3. **Make a test company in Tally** (a copy of your real one) and use it for the first runs.
    In the tracker's Tally page, put that test company's name in "Tally company name".
 4. **Create the agent's login:** Supabase → Authentication → Users → *Add user*. Use a separate email
-   (for example `tally-agent@studio5.in`) and a strong password.
+   (for example `tally-agent@studio5.in`) and a strong password. Then allow it into Studio5 data
+   (only staff can read or write anything — see `supabase/migration_013_staff_access.sql`), in the SQL editor:
+   `insert into public.staff (user_id, note) select id, 'Tally agent' from auth.users where email = 'tally-agent@studio5.in';`
 5. In this folder: `npm install`, then copy `env.example.txt` to `.env` and fill in `AGENT_EMAIL` / `AGENT_PASSWORD`.
 6. In Tally create these ledgers if they do not exist (or change the names on the tracker's Tally page):
    `Sales - Interior Fit-Out`, `IGST`, `CGST`, `SGST`, `TDS Receivable`, `Bank Account`, `Cash`,

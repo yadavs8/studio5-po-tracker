@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
+import { check, paymentInput } from '@/lib/validation';
 import type { Client, Site, Payment, InvoiceSettlementRow, PaymentType, PaymentMode } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -51,36 +51,63 @@ export default function PaymentsPage() {
     });
   }, []);
 
+  // Choosing a client or site resets everything that belonged to the old one — including an open
+  // "Match to invoice" drawer, whose payment would no longer be in the list.
+  function chooseClient(id: string) {
+    setClientId(id);
+    setSites([]);
+    chooseSite('');
+  }
+  function chooseSite(id: string) {
+    setSiteId(id);
+    setPayments([]); setUnallocated({}); setOpenInvoices([]);
+    setShowNewPayment(false); setAllocatingPaymentId(null);
+  }
+
   useEffect(() => {
-    if (!clientId) { setSites([]); setSiteId(''); return; }
-    supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data }) => setSites((data ?? []) as Site[]));
+    if (!clientId) return;
+    let alive = true;
+    supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data, error }) => {
+      if (!alive) return;
+      if (error) setError(friendlyError(error)); else setSites((data ?? []) as Site[]);
+    });
+    return () => { alive = false; };
   }, [clientId]);
 
+  // A reply that belongs to an earlier site is ignored.
+  const loadSeq = useRef(0);
+  // The current site, for reloads triggered after an await (a save) whose closure may be older.
+  const currentSite = useRef(siteId);
+  useEffect(() => { currentSite.current = siteId; }, [siteId]);
+  async function loadSite(forSite = currentSite.current) {
+    const seq = ++loadSeq.current;
+    if (!forSite) return;
+    const [payRes, openRes] = await Promise.all([
+      supabase.from('payment').select('*').eq('site_id', forSite).order('payment_date', { ascending: false }),
+      supabase.from('v_invoice_settlement').select('*').eq('site_id', forSite).gt('remaining_balance', 0),
+    ]);
+    if (seq !== loadSeq.current) return;
+    if (payRes.error || openRes.error) { setError(friendlyError(payRes.error ?? openRes.error)); return; }
+    const pays = (payRes.data ?? []) as Payment[];
+    const map: Record<string, number> = {};
+    if (pays.length > 0) {
+      const { data: unallocData, error: uErr } = await supabase
+        .from('v_unallocated_payments').select('payment_id, unallocated_amount').in('payment_id', pays.map((p) => p.payment_id));
+      if (seq !== loadSeq.current) return;
+      // Without this, every payment would wrongly show as fully matched.
+      if (uErr) { setError(friendlyError(uErr)); return; }
+      ((unallocData ?? []) as { payment_id: string; unallocated_amount: number }[]).forEach((u) => { map[u.payment_id] = Number(u.unallocated_amount); });
+    }
+    setPayments(pays);
+    setUnallocated(map);
+    setOpenInvoices((openRes.data ?? []) as InvoiceSettlementRow[]);
+  }
   useEffect(() => {
-    if (!siteId) { setPayments([]); setOpenInvoices([]); return; }
-    loadPayments();
-    loadOpenInvoices();
+    loadSite(siteId);
   }, [siteId]);
 
-  function loadPayments() {
-    supabase.from('payment').select('*').eq('site_id', siteId).order('payment_date', { ascending: false }).then(async ({ data, error }) => {
-      if (error) { setError(friendlyError(error)); return; }
-      const pays = data as Payment[];
-      setPayments(pays);
-      if (pays.length > 0) {
-        const { data: unallocData } = await supabase.from('v_unallocated_payments').select('*').in('payment_id', pays.map((p) => p.payment_id));
-        const map: Record<string, number> = {};
-        (unallocData as any[] ?? []).forEach((u) => { map[u.payment_id] = u.unallocated_amount; });
-        setUnallocated(map);
-      }
-    });
-  }
-
-  function loadOpenInvoices() {
-    supabase.from('v_invoice_settlement').select('*').eq('site_id', siteId).gt('remaining_balance', 0).then(({ data, error }) => {
-      if (error) setError(friendlyError(error)); else setOpenInvoices(data as InvoiceSettlementRow[]);
-    });
-  }
+  // Never render the drawer for a payment that is not in the current list (that used to crash the page).
+  const allocatingPayment = allocatingPaymentId ? payments.find((p) => p.payment_id === allocatingPaymentId) ?? null : null;
 
   return (
     <div className="pb-12">
@@ -89,8 +116,8 @@ export default function PaymentsPage() {
 
       <div className="px-6 py-6 lg:px-8">
         <div className="card mb-6 grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
-          <FieldSelect label="Client" value={clientId} onChange={setClientId} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
-          <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
+          <FieldSelect label="Client" value={clientId} onChange={chooseClient} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
+          <FieldSelect label="Site" value={siteId} onChange={chooseSite} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
         </div>
 
         {!siteId ? (
@@ -108,7 +135,7 @@ export default function PaymentsPage() {
               <NewPaymentForm
                 siteId={siteId}
                 onCancel={() => setShowNewPayment(false)}
-                onCreated={() => { setShowNewPayment(false); loadPayments(); loadOpenInvoices(); }}
+                onCreated={() => { setShowNewPayment(false); loadSite(); }}
               />
             )}
             <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-2.5 font-sans text-xs leading-relaxed text-slate-500">
@@ -152,13 +179,14 @@ export default function PaymentsPage() {
           </Panel>
         )}
 
-        {allocatingPaymentId && (
+        {allocatingPayment && (
           <AllocationDrawer
-            payment={payments.find((p) => p.payment_id === allocatingPaymentId)!}
-            unallocatedAmount={unallocated[allocatingPaymentId] ?? 0}
+            key={allocatingPayment.payment_id}
+            payment={allocatingPayment}
+            unallocatedAmount={unallocated[allocatingPayment.payment_id] ?? 0}
             openInvoices={openInvoices}
             onClose={() => setAllocatingPaymentId(null)}
-            onAllocated={() => { loadPayments(); loadOpenInvoices(); }}
+            onAllocated={() => loadSite()}
           />
         )}
       </div>
@@ -200,8 +228,9 @@ function NewPaymentForm({
   const left = total - matched;
 
   async function submit() {
-    if (!date || !amount) { setErr('Please enter the date and the amount received.'); return; }
-    if (!confirmBeforeStart(date, 'payment')) return;
+    const c = check(paymentInput, { payment_date: date, amount_received: amount, utr_or_reference: reference });
+    if (!c.ok) { setErr(c.error); return; }
+    if (Object.values(match).some((v) => v.trim() !== '' && !(Number(v) >= 0))) { setErr('Each amount matched to an invoice must be a plain number.'); return; }
     if (left < -0.005) { setErr('You have matched more than the amount received. Please reduce the amounts matched to invoices.'); return; }
     setSubmitting(true);
     setErr(null);
@@ -214,8 +243,8 @@ function NewPaymentForm({
     const { error } = await supabase.rpc('record_payment', {
       p_site_id: siteId,
       p_po_id: poId || null,
-      p_date: date,
-      p_amount: Number(amount),
+      p_date: c.data.payment_date,
+      p_amount: c.data.amount_received,
       p_type: type,
       p_mode: mode,
       p_reference: reference,
@@ -253,6 +282,7 @@ function NewPaymentForm({
                 </div>
                 <input
                   type="number" min="0" step="0.01" placeholder="0"
+                  aria-label={`Amount of this payment for invoice ${inv.invoice_number}`}
                   value={match[inv.invoice_id] ?? ''}
                   onChange={(e) => setMatch({ ...match, [inv.invoice_id]: e.target.value })}
                   className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right font-mono text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/15"

@@ -4,14 +4,15 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { countsAsBilled } from '@/lib/statement';
+import { resolveGst } from '@/lib/money';
 import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
-import { friendlyError } from '@/lib/plain';
 import { formatINR, formatDate } from '@/lib/format';
 import { FileSpreadsheet, ArrowLeft, Pencil, UploadCloud, FolderOpen } from 'lucide-react';
 import { DocumentList } from '@/components/DocumentList';
 import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
-import { WORDS, HELP } from '@/lib/plain';
+import { WORDS, HELP, friendlyError, isUuid } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
 import { confirmBeforeStart, REPORTING_START_LABEL } from '@/lib/period';
 
@@ -22,7 +23,7 @@ interface PoRow {
   yet_to_invoice: number; invoice_outstanding: number; balance_against_po: number;
 }
 interface PiRow { pi_id: string; po_id: string | null; pi_number: string; pi_date: string; amount: number; status: string; subject: string | null; remarks: string | null; document_id: string | null; }
-interface InvRow { invoice_id: string; po_id: string | null; invoice_number: string; invoice_date: string; gross_invoice_value: number; document_id: string | null; sub_project_id: string | null; }
+interface InvRow { invoice_id: string; po_id: string | null; invoice_number: string; invoice_date: string; gross_invoice_value: number; document_id: string | null; sub_project_id: string | null; status: string; }
 interface SettleRow { invoice_id: string; total_payments_allocated: number; total_deducted: number; remaining_balance: number; computed_status: string; }
 interface PayRow { payment_id: string; po_id: string | null; payment_date: string; amount_received: number; payment_type: string; payment_mode: string; utr_or_reference: string | null; remarks: string | null; document_id: string | null; }
 interface AllocRow { payment_id: string; invoice_id: string | null; amount_allocated: number; }
@@ -42,21 +43,27 @@ function SitePageInner() {
   const [editing, setEditing] = useState<{ kind: EditKind; id: string } | null>(null);
   const [docsKey, setDocsKey] = useState(0);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when the site in the link changes
   useEffect(() => { load(); }, [id]);
 
   function load() {
+    if (!isUuid(id)) {
+      setError('This link is not valid: it does not point at a site. Please open the site again from the Overview.');
+      setLoading(false);
+      return;
+    }
     (async () => {
       const q = await Promise.all([
         supabase.from('site').select('site_name, client:client_id(display_name)').eq('site_id', id).single(),
         supabase.from('v_site_dashboard').select('*').eq('site_id', id).maybeSingle(),
         supabase.from('v_po_summary').select('*').eq('site_id', id).order('po_date'),
         supabase.from('proforma_invoice').select('*').eq('site_id', id).order('pi_date'),
-        supabase.from('tax_invoice').select('invoice_id,po_id,invoice_number,invoice_date,gross_invoice_value,document_id,sub_project_id').eq('site_id', id).order('invoice_date'),
+        supabase.from('tax_invoice').select('invoice_id,po_id,invoice_number,invoice_date,gross_invoice_value,document_id,sub_project_id,status').eq('site_id', id).order('invoice_date'),
         supabase.from('v_invoice_settlement').select('*').eq('site_id', id),
         supabase.from('payment').select('*').eq('site_id', id).order('payment_date'),
       ]);
       const failed = q.find((r) => r.error);
-      if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
+      if (failed?.error) { setError(friendlyError(failed.error)); setLoading(false); return; }
       const s = q[0].data as unknown as { site_name: string; client: { display_name: string } | null };
       setSite({ site_name: s.site_name, client: s.client?.display_name ?? '' });
       setDash((q[1].data as SiteDashboardRow) ?? null);
@@ -68,7 +75,7 @@ function SitePageInner() {
       setPays(payRows);
       if (payRows.length) {
         const { data: a, error: ae } = await supabase.from('payment_allocation').select('payment_id,invoice_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
-        if (ae) setError(ae.message); else setAllocs((a ?? []) as AllocRow[]);
+        if (ae) setError(friendlyError(ae)); else setAllocs((a ?? []) as AllocRow[]);
       }
       setLoading(false);
     })();
@@ -81,7 +88,8 @@ function SitePageInner() {
   const vPis = pis, vInvs = invs, vPays = pays, vPos = pos;
 
   const totalReceived = vPays.reduce((s, p) => s + Number(p.amount_received), 0);
-  const totalBilled = vInvs.reduce((s, i) => s + Number(i.gross_invoice_value), 0);
+  // Cancelled / draft invoices are listed (with their status) but are not bills (migration_014).
+  const totalBilled = vInvs.filter(countsAsBilled).reduce((s, i) => s + Number(i.gross_invoice_value), 0);
   const sumPo = (k: keyof PoRow) => vPos.reduce((s, p) => s + Number(p[k] ?? 0), 0);
 
   // receipts belonging to a PO: tagged to it, or allocated to one of its invoices
@@ -104,7 +112,7 @@ function SitePageInner() {
     <div className="pb-12">
       <PageHeader
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <a href="#documents" className={buttonClass}>
               <FolderOpen size={15} /> Documents
             </a>
@@ -350,7 +358,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
       Object.entries(data).forEach(([k, v]) => { f[k] = v == null ? '' : String(v); });
       setForm(f);
     });
-  }, [kind, id]);
+  }, [cfg.table, cfg.idField, id]);
 
   const set = (k: string) => (v: string) => setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -358,6 +366,16 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
     if (!row) return;
     const dateKey = ['po_date', 'pi_date', 'invoice_date', 'payment_date'].find((k) => k in form);
     if (dateKey && form[dateKey] !== String(row[dateKey] ?? '') && !confirmBeforeStart(form[dateKey], cfg.label.toLowerCase())) return;
+    // Invoice amounts follow the GST rule (decision 0004): with GST filled in, the total is taxable + GST;
+    // with GST blank, GST is worked out from the total. Checked before any file is uploaded.
+    let invoiceAmounts: { taxable: number; gst: number; gross: number } | null = null;
+    if (kind === 'invoice') {
+      const num = (k: string) => (form[k] ?? '').trim() === '' ? null : Number(form[k]);
+      const gstBlank = (form.gst_amount ?? '').trim() === '';
+      const r = resolveGst(num('taxable_value'), gstBlank ? null : num('gst_amount'), gstBlank ? num('gross_invoice_value') : null);
+      if (!r.ok) { setSaveError(r.error); return; }
+      invoiceAmounts = r;
+    }
     setSubmitting(true);
     setSaveError(null);
     let newDocId: string | null = null;
@@ -378,16 +396,25 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
       const value = typeof original === 'number' ? (raw === '' ? null : Number(raw)) : (raw === '' ? null : raw);
       if (String(original ?? '') !== String(value ?? '')) patch[key] = value;
     }
+    if (invoiceAmounts) {
+      const amounts = { taxable_value: invoiceAmounts.taxable, gst_amount: invoiceAmounts.gst, gross_invoice_value: invoiceAmounts.gross };
+      for (const [k, v] of Object.entries(amounts)) {
+        if (Number(row[k] ?? NaN) !== v) patch[k] = v; else delete patch[k];
+      }
+    }
     const oldDocId = row.document_id as string | null;
     if (newDocId) patch.document_id = newDocId;
 
     const { error } = await updateWithAudit(cfg.table, cfg.idField, id, patch);
     setSubmitting(false);
-    if (error) { setSaveError(friendlyError(error)); return; }
-    if (newDocId && oldDocId) {
-      const { discardDocument } = await import('@/lib/documents');
-      await discardDocument(oldDocId);
+    const { discardDocument } = await import('@/lib/documents');
+    if (error) {
+      // Not saved: the newly uploaded file must not linger unfiled.
+      if (newDocId) await discardDocument(newDocId).catch(() => undefined);
+      setSaveError(friendlyError(error));
+      return;
     }
+    if (newDocId && oldDocId) await discardDocument(oldDocId);
     onSaved();
   }
 
@@ -422,10 +449,18 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                 <FieldInput label="PI Date" type="date" value={form.pi_date ?? ''} onChange={set('pi_date')} />
                 <FieldInput label="Amount" type="number" value={form.amount ?? ''} onChange={set('amount')} />
                 <FieldInput label="Submitted Date" type="date" value={form.submitted_date ?? ''} onChange={set('submitted_date')} />
-                <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
-                  { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
-                  { value: 'approved', label: 'Approved' }, { value: 'converted_to_invoice', label: 'Converted to Invoice' },
-                ]} />
+                {row?.status === 'converted_to_invoice' ? (
+                  // A PI that became a tax invoice stays that way (the database refuses changes too).
+                  <div className="text-sm">
+                    <div className="mb-1 text-xs font-medium text-slate-500">Status</div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Converted to a tax invoice</div>
+                  </div>
+                ) : (
+                  <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
+                    { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
+                    { value: 'approved', label: 'Approved' },
+                  ]} />
+                )}
                 <FieldInput label="Subject" value={form.subject ?? ''} onChange={set('subject')} full />
                 <FieldInput label="Work status / remarks" value={form.remarks ?? ''} onChange={set('remarks')} full />
               </>
@@ -436,7 +471,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                 <FieldInput label="Invoice Date" type="date" value={form.invoice_date ?? ''} onChange={set('invoice_date')} />
                 <FieldInput label="Taxable Value" type="number" value={form.taxable_value ?? ''} onChange={set('taxable_value')} />
                 <FieldInput label="GST Amount" type="number" value={form.gst_amount ?? ''} onChange={set('gst_amount')} />
-                <FieldInput label="Gross Invoice Value" type="number" value={form.gross_invoice_value ?? ''} onChange={set('gross_invoice_value')} />
+                <FieldInput label="Invoice total (used only when GST is blank)" type="number" value={form.gross_invoice_value ?? ''} onChange={set('gross_invoice_value')} />
                 <FieldInput label="Due Date" type="date" value={form.due_date ?? ''} onChange={set('due_date')} />
                 <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
                   { value: 'draft', label: 'Draft' }, { value: 'issued', label: 'Issued' }, { value: 'partially_settled', label: 'Partially Settled' },

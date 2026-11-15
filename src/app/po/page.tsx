@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { friendlyError, isUuid } from '@/lib/plain';
 import { documentDownloadUrl } from '@/lib/documents';
 import { formatINR, formatDate } from '@/lib/format';
 import { PageHeader, ErrorBanner, Panel, DataTable, Td, StatusBadge, EmptyState, buttonClass } from '@/lib/ui';
@@ -55,12 +56,9 @@ function PoDetailPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
+  const validId = isUuid(id);
   useEffect(() => {
-    if (!id) {
-      setError('No order ID specified.');
-      setLoading(false);
-      return;
-    }
+    if (!validId) return; // handled in render: no request for a bad link
 
     async function load() {
       setLoading(true);
@@ -84,7 +82,7 @@ function PoDetailPageInner() {
       ]);
 
       if (poRes.error) {
-        setError(poRes.error.message);
+        setError(friendlyError(poRes.error));
       } else {
         setPo(poRes.data as unknown as PoDetail);
       }
@@ -95,7 +93,7 @@ function PoDetailPageInner() {
       setLoading(false);
     }
     load();
-  }, [id]);
+  }, [id, validId]);
 
   async function handleDownload() {
     if (!po?.document_id) return;
@@ -111,7 +109,7 @@ function PoDetailPageInner() {
         document.body.removeChild(a);
       }
     } catch (err) {
-      console.error('Download error:', err);
+      setError(`Could not download the file: ${friendlyError(err as Error)}`);
     } finally {
       setDownloading(false);
     }
@@ -121,13 +119,15 @@ function PoDetailPageInner() {
   const siteName = po?.site?.site_name;
   const subtitle = clientName && siteName ? `${clientName} — ${siteName}` : siteName || clientName || '';
 
+  const shownError = !validId ? 'This link is not valid: it does not point at a purchase order. Please open it again from the list.' : error;
+
   return (
     <div className="pb-12">
       <PageHeader
         title={po?.po_number ?? 'Purchase order'}
         subtitle={subtitle}
-        actions={
-          <div className="flex items-center gap-2">
+        actions={!po ? undefined : (
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/upload"
               className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"
@@ -154,9 +154,9 @@ function PoDetailPageInner() {
               <span className="text-xs text-slate-400">No file attached</span>
             )}
           </div>
-        }
+        )}
       />
-      {error && <ErrorBanner message={error} />}
+      {shownError && <ErrorBanner message={shownError} />}
 
       <div className="space-y-6 px-6 py-6 lg:px-8">
         <Link
@@ -166,7 +166,7 @@ function PoDetailPageInner() {
           <ArrowLeft size={15} /> POs / WOs
         </Link>
 
-        {loading ? (
+        {validId && loading ? (
           <div className="card space-y-4 p-6">
             <div className="skeleton h-6 w-1/3" />
             <div className="skeleton h-10 w-full" />

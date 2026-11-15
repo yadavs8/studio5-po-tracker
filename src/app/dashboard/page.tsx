@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, FileSpreadsheet, UploadCloud } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetchAll';
 import type { SiteDashboardRow } from '@/lib/types';
 import { formatINR } from '@/lib/format';
 import { PageHeader, ErrorBanner, EmptyState, StatTile, Panel, buttonClass } from '@/lib/ui';
@@ -37,13 +38,12 @@ export default function DashboardPage() {
       try {
         const [view, pis, period] = await Promise.all([
           supabase.from('v_site_dashboard').select('site_id, site_name, client_name, normal_outstanding'),
-          supabase.from('proforma_invoice').select('site_id, amount, status'),
+          fetchAll(() => supabase.from('proforma_invoice').select('site_id, amount, status').order('pi_id')),
           loadPeriodFigures(),
         ]);
         if (view.error) throw new Error(view.error.message);
-        if (pis.error) throw new Error(pis.error.message);
         const piBySite: Record<string, number> = {};
-        ((pis.data ?? []) as { site_id: string; amount: number; status: string }[])
+        (pis as { site_id: string; amount: number; status: string }[])
           .filter((p) => p.status !== 'converted_to_invoice')
           .forEach((p) => { piBySite[p.site_id] = (piBySite[p.site_id] ?? 0) + Number(p.amount); });
         const list = ((view.data ?? []) as Pick<SiteDashboardRow, 'site_id' | 'site_name' | 'client_name' | 'normal_outstanding'>[])
@@ -72,7 +72,7 @@ export default function DashboardPage() {
         title="Overview"
         subtitle={`All sites from ${REPORTING_START_LABEL}.`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/upload"
               className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/25 hover:from-blue-700 hover:to-indigo-800 transition-all"

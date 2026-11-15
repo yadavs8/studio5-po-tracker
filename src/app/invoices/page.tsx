@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
+import { check, invoiceInput, deductionInput } from '@/lib/validation';
 import type { Client, Site, SubProject, PurchaseOrder, ProformaInvoice, TaxInvoice, Deduction, InvoiceSettlementRow, DeductionType } from '@/lib/types';
 import { formatINR, formatDate } from '@/lib/format';
 import {
@@ -53,44 +53,83 @@ export default function InvoicesPage() {
     });
   }, []);
 
+  // Choosing a client or site resets everything that depended on the old one, so nothing can be
+  // saved against a site that is no longer selected.
+  function chooseClient(id: string) {
+    setClientId(id);
+    setSites([]);
+    chooseSite('');
+  }
+  function chooseSite(id: string) {
+    setSiteId(id);
+    setSubProjectId('');
+    setSubProjects([]); setPos([]); setPis([]);
+    setInvoices([]); setSettlement({}); setDeductionsByInvoice({});
+    setShowNewInvoice(false); setDeductionFormInvoiceId(null);
+  }
+
   useEffect(() => {
-    if (!clientId) { setSites([]); setSiteId(''); return; }
+    if (!clientId) return;
+    let alive = true;
     supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data, error }) => {
+      if (!alive) return;
       if (error) setError(friendlyError(error)); else setSites(data as Site[]);
     });
+    return () => { alive = false; };
   }, [clientId]);
 
   useEffect(() => {
-    if (!siteId) { setSubProjects([]); setInvoices([]); return; }
-    supabase.from('sub_project').select('*').eq('site_id', siteId).order('name').then(({ data }) => setSubProjects((data ?? []) as SubProject[]));
-    supabase.from('purchase_order').select('*').eq('site_id', siteId).then(({ data }) => setPos((data ?? []) as PurchaseOrder[]));
-    supabase.from('proforma_invoice').select('*').eq('site_id', siteId).then(({ data }) => setPis((data ?? []) as ProformaInvoice[]));
-    loadInvoices();
-  }, [siteId, subProjectId]);
-
-  function loadInvoices() {
-    let q = supabase.from('tax_invoice').select('*').eq('site_id', siteId);
-    q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
-    q.order('invoice_date', { ascending: false }).then(async ({ data, error }) => {
-      if (error) { setError(friendlyError(error)); return; }
-      const invs = data as TaxInvoice[];
-      setInvoices(invs);
-      if (invs.length > 0) {
-        const ids = invs.map((i) => i.invoice_id);
-        const { data: settleData } = await supabase.from('v_invoice_settlement').select('*').in('invoice_id', ids);
-        const map: Record<string, InvoiceSettlementRow> = {};
-        (settleData as InvoiceSettlementRow[] ?? []).forEach((r) => { map[r.invoice_id] = r; });
-        setSettlement(map);
-
-        const { data: dedData } = await supabase.from('deduction').select('*').in('invoice_id', ids);
-        const dmap: Record<string, Deduction[]> = {};
-        (dedData as Deduction[] ?? []).forEach((d) => {
-          dmap[d.invoice_id] = [...(dmap[d.invoice_id] ?? []), d];
-        });
-        setDeductionsByInvoice(dmap);
-      }
+    if (!siteId) return;
+    let alive = true;
+    Promise.all([
+      supabase.from('sub_project').select('*').eq('site_id', siteId).order('name'),
+      supabase.from('purchase_order').select('*').eq('site_id', siteId).order('po_date'),
+      supabase.from('proforma_invoice').select('*').eq('site_id', siteId).order('pi_date'),
+    ]).then(([sp, po, pi]) => {
+      if (!alive) return;
+      const failed = [sp, po, pi].find((r) => r.error);
+      if (failed?.error) { setError(friendlyError(failed.error)); return; }
+      setSubProjects((sp.data ?? []) as SubProject[]);
+      setPos((po.data ?? []) as PurchaseOrder[]);
+      setPis((pi.data ?? []) as ProformaInvoice[]);
     });
+    return () => { alive = false; };
+  }, [siteId]);
+
+  // Each load gets a number; a reply to an older load (an earlier site) is ignored.
+  const loadSeq = useRef(0);
+  // The current choice, for reloads triggered after an await (a save) whose closure may be older.
+  const current = useRef({ siteId, subProjectId });
+  useEffect(() => { current.current = { siteId, subProjectId }; }, [siteId, subProjectId]);
+  async function loadInvoices(forSite = current.current.siteId, forSub = current.current.subProjectId) {
+    const seq = ++loadSeq.current;
+    if (!forSite) return;
+    let q = supabase.from('tax_invoice').select('*').eq('site_id', forSite);
+    q = forSub ? q.eq('sub_project_id', forSub) : q;
+    const { data, error } = await q.order('invoice_date', { ascending: false });
+    if (seq !== loadSeq.current) return;
+    if (error) { setError(friendlyError(error)); return; }
+    const invs = data as TaxInvoice[];
+    const ids = invs.map((i) => i.invoice_id);
+    const [settleRes, dedRes] = ids.length
+      ? await Promise.all([
+          supabase.from('v_invoice_settlement').select('*').in('invoice_id', ids),
+          supabase.from('deduction').select('*').in('invoice_id', ids),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }];
+    if (seq !== loadSeq.current) return;
+    if (settleRes.error || dedRes.error) { setError(friendlyError(settleRes.error ?? dedRes.error)); return; }
+    const map: Record<string, InvoiceSettlementRow> = {};
+    ((settleRes.data ?? []) as InvoiceSettlementRow[]).forEach((r) => { map[r.invoice_id] = r; });
+    const dmap: Record<string, Deduction[]> = {};
+    ((dedRes.data ?? []) as Deduction[]).forEach((d) => { dmap[d.invoice_id] = [...(dmap[d.invoice_id] ?? []), d]; });
+    setInvoices(invs);
+    setSettlement(map);
+    setDeductionsByInvoice(dmap);
   }
+  useEffect(() => {
+    loadInvoices(siteId, subProjectId);
+  }, [siteId, subProjectId]);
 
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
@@ -101,8 +140,8 @@ export default function InvoicesPage() {
 
       <div className="px-6 py-6 lg:px-8">
         <div className="card mb-6 grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
-          <FieldSelect label="Client" value={clientId} onChange={setClientId} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
-          <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
+          <FieldSelect label="Client" value={clientId} onChange={chooseClient} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
+          <FieldSelect label="Site" value={siteId} onChange={chooseSite} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
           {selectedSite?.has_sub_projects && (
             <FieldSelect label="Sub-Project (optional)" value={subProjectId} onChange={setSubProjectId} options={subProjects.map((sp) => ({ value: sp.sub_project_id, label: sp.name }))} />
           )}
@@ -159,8 +198,9 @@ export default function InvoicesPage() {
                           <td colSpan={7}>
                             <DeductionPanel
                               invoiceId={inv.invoice_id}
+                              invoiceDate={inv.invoice_date}
                               existing={deductionsByInvoice[inv.invoice_id] ?? []}
-                              onSaved={loadInvoices}
+                              onSaved={() => loadInvoices()}
                             />
                           </td>
                         </tr>
@@ -202,18 +242,24 @@ function NewInvoiceForm({
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const gross = (Number(taxableValue) || 0) + (Number(gstAmount) || 0);
-  const [poLeft, setPoLeft] = useState<number | null>(null);
+  // GST rule (decision 0004) and the shared checks: blank GST is refused here (there is no total to work it out from).
+  const checked = check(invoiceInput, { invoice_number: invoiceNumber, invoice_date: invoiceDate, taxable_value: taxableValue, gst_amount: gstAmount, total: '' });
+  const gross = checked.ok ? checked.data.gross_invoice_value : (Number(taxableValue) || 0) + (Number(gstAmount) || 0);
+  // "Left to bill" for the chosen PO; kept with the PO it belongs to, so a stale figure never shows.
+  const [poLeftFor, setPoLeftFor] = useState<{ poId: string; left: number | null }>({ poId: '', left: null });
   useEffect(() => {
-    if (!poId) { setPoLeft(null); return; }
+    if (!poId) return;
+    let alive = true;
     supabase.from('v_po_summary').select('yet_to_invoice').eq('po_id', poId).maybeSingle()
-      .then(({ data }) => setPoLeft(data ? Number(data.yet_to_invoice) : null));
+      .then(({ data, error }) => { if (alive && !error) setPoLeftFor({ poId, left: data ? Number(data.yet_to_invoice) : null }); });
+    return () => { alive = false; };
   }, [poId]);
+  const poLeft = poId && poLeftFor.poId === poId ? poLeftFor.left : null;
   const overPo = poLeft !== null && gross > poLeft + 0.5;
 
   async function submit() {
-    if (!invoiceNumber.trim() || !invoiceDate || !taxableValue) return;
-    if (!confirmBeforeStart(invoiceDate, 'tax invoice')) return;
+    if (!checked.ok) { setErr(checked.error); return; }
+    const v = checked.data;
     setSubmitting(true);
     setErr(null);
     let documentId: string | null = null;
@@ -223,11 +269,11 @@ function NewInvoiceForm({
       p_sub_project_id: subProjectId,
       p_po_id: poId || null,
       p_pi_id: piId || null,
-      p_invoice_number: invoiceNumber.trim(),
-      p_invoice_date: invoiceDate,
-      p_taxable: Number(taxableValue),
-      p_gst: Number(gstAmount) || 0,
-      p_gross: gross,
+      p_invoice_number: v.invoice_number,
+      p_invoice_date: v.invoice_date,
+      p_taxable: v.taxable_value,
+      p_gst: v.gst_amount,
+      p_gross: v.gross_invoice_value,
       p_document_id: documentId,
     });
     setSubmitting(false);
@@ -240,7 +286,7 @@ function NewInvoiceForm({
       <FieldInput label="Invoice Number" value={invoiceNumber} onChange={setInvoiceNumber} placeholder="e.g. S5I/24-25/022" />
       <FieldInput label="Invoice Date" type="date" value={invoiceDate} onChange={setInvoiceDate} />
       <FieldInput label="Taxable Value" type="number" value={taxableValue} onChange={setTaxableValue} />
-      <FieldInput label="GST Amount" type="number" value={gstAmount} onChange={setGstAmount} />
+      <FieldInput label="GST Amount (0 if none)" type="number" value={gstAmount} onChange={setGstAmount} />
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
       <FieldSelect label="Linked PI (optional)" value={piId} onChange={setPiId} options={pis.map((p) => ({ value: p.pi_id, label: p.pi_number }))} />
       <FieldFile onChange={setFile} />
@@ -258,10 +304,12 @@ function NewInvoiceForm({
 
 function DeductionPanel({
   invoiceId,
+  invoiceDate,
   existing,
   onSaved,
 }: {
   invoiceId: string;
+  invoiceDate: string;
   existing: Deduction[];
   onSaved: () => void;
 }) {
@@ -272,21 +320,38 @@ function DeductionPanel({
   const [dedErr, setDedErr] = useState<string | null>(null);
 
   async function submit() {
-    if (!type || !amount) { setDedErr('Please choose the type and enter the amount.'); return; }
+    const c = check(deductionInput, { deduction_type: type, amount });
+    if (!c.ok) { setDedErr(c.error); return; }
     setSubmitting(true);
     setDedErr(null);
     const { error: dedError } = await supabase.from('deduction').insert({
       invoice_id: invoiceId,
-      deduction_type: type,
-      amount: Number(amount),
+      deduction_type: c.data.deduction_type,
+      amount: c.data.amount,
       category_note: note.trim() || null,
       status: 'pending',
+      // Dated like the invoice, so TDS lands in the invoice's financial year (decision 0007).
+      deduction_date: invoiceDate,
     });
     setSubmitting(false);
     if (dedError) { setDedErr(friendlyError(dedError)); return; }
     setType(''); setAmount(''); setNote('');
     onSaved();
   }
+
+  // Retention / handover holds: once the client pays the held money, mark it released so the
+  // release payment can be matched to this invoice (decision 0005).
+  const [releasing, setReleasing] = useState<string | null>(null);
+  async function release(d: Deduction) {
+    if (!window.confirm(`Mark ${formatINR(d.amount)} held back as released? Do this when the client has paid (or is paying) the held amount.`)) return;
+    setReleasing(d.deduction_id);
+    setDedErr(null);
+    const { error: relError } = await supabase.from('deduction').update({ status: 'released' }).eq('deduction_id', d.deduction_id);
+    setReleasing(null);
+    if (relError) { setDedErr(friendlyError(relError)); return; }
+    onSaved();
+  }
+  const isHold = (d: Deduction) => d.deduction_type === 'retention' || d.deduction_type === 'handover_hold';
 
   return (
     <div className="border-t border-b border-slate-100 bg-slate-50 px-6 py-4">
@@ -295,7 +360,15 @@ function DeductionPanel({
           {existing.map((d) => (
             <div key={d.deduction_id} className="flex justify-between font-mono text-xs">
               <span>{d.deduction_type.replace(/_/g, ' ')}{d.category_note ? ` — ${d.category_note}` : ''}</span>
-              <span>{formatINR(d.amount)} · {d.status}</span>
+              <span className="flex items-center gap-2">
+                {formatINR(d.amount)} · {d.status}
+                {isHold(d) && d.status === 'pending' && (
+                  <button onClick={() => release(d)} disabled={releasing === d.deduction_id}
+                    className="rounded border border-slate-300 bg-white px-2 py-0.5 font-sans text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                    {releasing === d.deduction_id ? 'Saving…' : 'Mark released'}
+                  </button>
+                )}
+              </span>
             </div>
           ))}
         </div>

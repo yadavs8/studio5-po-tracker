@@ -15,18 +15,18 @@ Create the login user under Authentication → Users and **switch off public sig
 
 ### Who can see the data
 Only logins listed in `public.staff` can read or change anything (the project is shared with other apps).
-Add someone: `insert into public.staff (user_id, note) select id, 'name' from auth.users where email = 'them@example.com';`
+Add someone: `insert into public.staff (user_id, note) select id, 'name' from auth.users where email = 'them@example.com';` — it should report `INSERT 0 1`; `INSERT 0 0` means the email is not a login yet (or has a typo).
 
 ### Upgrading the live database (migrations 013–016), in this order
 Each step is safe to run again. The current site keeps working after every step, so the database goes first and the new site last.
-1. Take a backup (Database → Backups, or `pg_dump`).
+1. Take a backup (Database → Backups, or `pg_dump`). **Stop the Tally agent** on its PC (after step 3 the old agent can no longer record what it sent, and would post it again).
 2. Authentication settings: switch off public sign-ups; switch on leaked-password protection.
 3. SQL editor — `migration_013_staff_access.sql`, with this line pasted **first** (your own login email; add the Tally agent's login if it has its own):
-   `set studio5.staff_emails = 'you@example.com';`
+   `set studio5.staff_emails = 'you@example.com';`  (if the Tally agent signs in with its own email, list it too: `'you@example.com, tally-agent@example.com'`)
    Check: `select u.email from public.staff s join auth.users u on u.id = s.user_id;` lists exactly the right people.
-4. On the Tally PC: pull this repo and restart the agent (it now records results through `tally_mark`).
+4. On the Tally PC: pull this repo and start the agent again (it now records results through `tally_mark`). Try `npm start` (rehearsal) before `npm run live`.
 5. SQL editor — `migration_014_money_views.sql`, then `migration_015_integrity.sql` (if it stops on duplicate PO/PI numbers, fix those rows and run it again), then `migration_016_brought_forward.sql`.
-6. Merge the pull request into `main`; GitHub Pages redeploys the site.
+6. In the current (old) site click **Sign out** once — this clears its site-wide login cookie. Then merge the pull request into `main`; GitHub Pages redeploys the site, and everyone signs in again.
 7. Open the site, sign in, and check a site page and its Account statement.
 Each migration's header says exactly what it changes and how to roll it back.
 

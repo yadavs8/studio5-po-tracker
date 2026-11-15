@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { formatINR, formatCompact } from './format';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { formatINR, formatCompact, formatDate, todayIST, daysSince } from './format';
+
+afterEach(() => vi.useRealTimers());
 
 describe('formatINR', () => {
   it('uses Indian grouping and two decimals', () => {
@@ -21,13 +23,14 @@ describe('formatCompact', () => {
   });
 });
 
-import { vi } from 'vitest';
-import { formatDate, todayIST, daysSince } from './format';
-
 describe('dates are Indian dates whatever the computer clock says (tests run in UTC)', () => {
   it('shows a stored date as that same day', () => {
     expect(formatDate('2026-08-01')).toBe('01 Aug 2026');
     expect(formatDate('2026-12-31')).toBe('31 Dec 2026');
+  });
+  it('shows a dash for a missing or unreadable date', () => {
+    expect(formatDate(null)).toBe('—');
+    expect(formatDate('not a date')).toBe('—');
   });
   it('shows a timestamp in IST', () => {
     // 20:00 UTC on 31 Jul is already 1 Aug in India
@@ -39,6 +42,5 @@ describe('dates are Indian dates whatever the computer clock says (tests run in 
     expect(todayIST()).toBe('2026-11-15');
     expect(daysSince('2026-09-16')).toBe(60);
     expect(daysSince('2026-09-15')).toBe(61);
-    vi.useRealTimers();
   });
 });

@@ -10,6 +10,9 @@ export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key',
   {
     cookieOptions: {
+      // Own name: another app of this account on github.io may use the same Supabase project, and its
+      // site-wide cookie (path /) would otherwise be sent here under the same default name.
+      name: 'sb-studio5-po-tracker-auth',
       path: APP_PATH,
       maxAge: 60 * 60 * 24 * 30, // 30 days
       sameSite: 'lax',

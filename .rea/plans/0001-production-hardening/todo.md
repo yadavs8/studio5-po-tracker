@@ -33,7 +33,7 @@ Status: done
 Files: `supabase/migration_016_brought_forward.sql`, `supabase/tests/brought_forward.sql`, `src/lib/period.ts`, `src/lib/period.test.ts`, `src/app/reports/page.tsx`, `src/app/site/statement/page.tsx`
 Done when: per ADR 0002, `brought_forward(site uuid default null)` (SECURITY DEFINER, fixed search_path, revoked from public/anon, refuses non-staff) returns per-site aggregates only for pre-cutoff records; SQL tests prove non-staff/anon are refused and no row-level data is returned; `loadBroughtForward` reads it and the existing Reports/Statement lines show the figures (C4, L7); re-apply is a no-op. Matching to pre-cutoff invoices stays out of scope.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U6 — Upload flow safety: replace choice, lookup race, site/link resets, detector fixes
 

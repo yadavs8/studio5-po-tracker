@@ -12,21 +12,21 @@ Status: done
 Files: `supabase/migration_013_staff_access.sql`, `supabase/tests/access.sql`, `tally-agent/agent.js`, `tally-agent/README.md`
 Done when: SQL tests prove a non-staff authenticated user can read/write nothing in Studio5 tables or the `studio5-documents` bucket, staff keeps today's access, `audit_log`/`tally_sync_log` are select-only for users, Tally status changes go through an RPC that cannot un-lock a pushed row, the Tally agent uses that RPC, inserts are audited, the migration aborts if it would leave `staff` empty and its header documents the rollback, the current frontend's queries still work for staff (compatibility test), re-apply is a no-op, bucket has size/MIME limits, trigger fns not executable via RPC (C1, H1, H2, M10, L5). Other apps' tables untouched.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U3 — Money views: no double count, exclude cancelled/draft
 
 Files: `supabase/migration_014_money_views.sql`, `supabase/tests/money_views.sql`, `src/app/site/statement/page.tsx`
 Done when: views are recreated with the same column names/order (new columns only appended; dependent views recreated in dependency order inside one transaction); SQL tests reproduce C2 (cross-PO tagged payment) and C3 (cancelled invoice) and pass after the migration: per-PO received sums to bank receipts; cancelled/draft invoices are excluded from billed/outstanding/ageing/todo and show status `cancelled`; statement uses the same rule; statement shows PO and no-PO balances separately (M18, ADR 0009); re-apply is a no-op.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U4 — Integrity: amount edits, unique PO/PI numbers, PI status, FK indexes, search_path
 
 Files: `supabase/migration_015_integrity.sql`, `supabase/tests/integrity.sql`
 Done when: SQL tests prove lowering an invoice/payment below what is settled/allocated is refused (H3), duplicate PO/PI numbers per site are refused (H4, ADR 0003) — the migration first checks for duplicates and aborts naming them rather than half-applying, a converted PI cannot change status (M17), Studio5 FK indexes exist (M12), the 6 functions have fixed search_path (M9); a hold can be marked released without tripping `fn_integrity`/RLS (M2 groundwork); re-apply is a no-op.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U5 — Brought-forward summary (staff-only aggregate)
 

@@ -26,6 +26,10 @@ export const HELP = {
   advanceLeft: 'Advance money received before invoices. It gets adjusted against future invoices.',
 } as const;
 
+/** True for a well-formed id (UUID). Links with anything else are refused before asking the database. */
+export const isUuid = (v: string | null | undefined): v is string =>
+  !!v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
 /** Turn database/technical errors into a sentence a non-technical person understands. */
 export function friendlyError(e: { message: string; code?: string } | null | undefined): string {
   if (!e) return '';
@@ -39,7 +43,9 @@ export function friendlyError(e: { message: string; code?: string } | null | und
   }
   if (e.code === '23503') return 'This is linked to something that no longer exists. Refresh the page and try again.';
   if (e.code === '23502') return 'A required field is empty. Please fill in every field marked required.';
-  if (e.code === '42501' || /row-level security/i.test(m)) return 'You are not signed in, or your session expired. Please sign in again.';
+  if (e.code === 'PGRST116' || /cannot coerce the result to a single json object/i.test(m)) return 'That record was not found. It may have been deleted, or it is dated before the portal start.';
+  if (e.code === '22P02' || /invalid input syntax for type uuid/i.test(m)) return 'This link is not valid. Please open the record again from its list.';
+  if (e.code === '42501' || /row-level security/i.test(m)) return 'You are not signed in, your session expired, or your login is not allowed to see Studio5 data. Please sign in again.';
   if (/Failed to fetch|NetworkError/i.test(m)) return 'Could not reach the server. Check your internet connection and try again.';
   // Our own database rules already speak plain English, e.g. "This is more than the invoice still needs…"
   return m;

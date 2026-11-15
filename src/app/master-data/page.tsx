@@ -24,16 +24,19 @@ export default function MasterDataPage() {
 
   useEffect(() => { loadClients(); }, []);
 
-  useEffect(() => {
-    if (selectedClientId) loadSites(selectedClientId);
-    else setSites([]);
+  // Picking a client clears the site picked under the previous client (and its sub-projects).
+  function chooseClient(id: string) {
+    setSelectedClientId(id);
+    setSites([]);
     setSelectedSiteId(null);
-  }, [selectedClientId]);
-
-  useEffect(() => {
-    if (selectedSiteId) loadSubProjects(selectedSiteId);
-    else setSubProjects([]);
-  }, [selectedSiteId]);
+    setSubProjects([]);
+    loadSites(id);
+  }
+  function chooseSite(id: string) {
+    setSelectedSiteId(id);
+    setSubProjects([]);
+    loadSubProjects(id);
+  }
 
   async function loadClients() {
     setLoading(true);
@@ -71,7 +74,7 @@ export default function MasterDataPage() {
             <EmptyState text="No clients yet. Add the first one." />
           ) : clients.map((c) => (
             <RowItem key={c.client_id} label={c.display_name} sublabel={c.legal_name}
-              selected={c.client_id === selectedClientId} onClick={() => setSelectedClientId(c.client_id)} />
+              selected={c.client_id === selectedClientId} onClick={() => chooseClient(c.client_id)} />
           ))}
         </Column>
 
@@ -85,7 +88,7 @@ export default function MasterDataPage() {
             <EmptyState text="No sites yet for this client." />
           ) : sites.map((s) => (
             <RowItem key={s.site_id} label={s.site_name} sublabel={s.has_sub_projects ? 'Has sub-projects (towers / packages)' : s.status}
-              selected={s.site_id === selectedSiteId} onClick={() => setSelectedSiteId(s.site_id)} />
+              selected={s.site_id === selectedSiteId} onClick={() => chooseSite(s.site_id)} />
           ))}
         </Column>
 

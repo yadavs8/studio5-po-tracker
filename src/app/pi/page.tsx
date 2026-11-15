@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { friendlyError, isUuid } from '@/lib/plain';
 import { documentDownloadUrl } from '@/lib/documents';
 import { formatINR, formatDate } from '@/lib/format';
 import { PageHeader, ErrorBanner, Panel, StatusBadge, buttonClass } from '@/lib/ui';
@@ -43,12 +44,9 @@ function PiDetailPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
+  const validId = isUuid(id);
   useEffect(() => {
-    if (!id) {
-      setError('No proforma invoice ID specified.');
-      setLoading(false);
-      return;
-    }
+    if (!validId) return; // handled in render: no request for a bad link
 
     async function load() {
       setLoading(true);
@@ -65,14 +63,14 @@ function PiDetailPageInner() {
         .single();
 
       if (qErr) {
-        setError(qErr.message);
+        setError(friendlyError(qErr));
       } else {
         setPi(data as unknown as PiDetail);
       }
       setLoading(false);
     }
     load();
-  }, [id]);
+  }, [id, validId]);
 
   async function handleDownload() {
     if (!pi?.document_id) return;
@@ -88,7 +86,7 @@ function PiDetailPageInner() {
         document.body.removeChild(a);
       }
     } catch (err) {
-      console.error('Download error:', err);
+      setError(`Could not download the file: ${friendlyError(err as Error)}`);
     } finally {
       setDownloading(false);
     }
@@ -98,12 +96,14 @@ function PiDetailPageInner() {
   const siteName = pi?.site?.site_name;
   const subtitle = clientName && siteName ? `${clientName} — ${siteName}` : siteName || clientName || '';
 
+  const shownError = !validId ? 'This link is not valid: it does not point at a proforma invoice. Please open it again from the list.' : error;
+
   return (
     <div className="pb-12">
       <PageHeader
         title={pi?.pi_number ?? 'Proforma invoice'}
         subtitle={subtitle}
-        actions={
+        actions={!pi ? undefined : (
           <div className="flex items-center gap-2">
             <Link
               href="/upload"
@@ -131,9 +131,9 @@ function PiDetailPageInner() {
               <span className="text-xs text-slate-400">No file attached</span>
             )}
           </div>
-        }
+        )}
       />
-      {error && <ErrorBanner message={error} />}
+      {shownError && <ErrorBanner message={shownError} />}
 
       <div className="space-y-6 px-6 py-6 lg:px-8">
         <Link
@@ -143,7 +143,7 @@ function PiDetailPageInner() {
           <ArrowLeft size={15} /> Proforma invoices
         </Link>
 
-        {loading ? (
+        {validId && loading ? (
           <div className="card space-y-4 p-6">
             <div className="skeleton h-6 w-1/3" />
             <div className="skeleton h-10 w-full" />

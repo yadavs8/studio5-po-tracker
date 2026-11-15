@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { confirmBeforeStart } from '@/lib/period';
 import { friendlyError } from '@/lib/plain';
@@ -53,44 +53,82 @@ export default function InvoicesPage() {
     });
   }, []);
 
+  // Choosing a client or site resets everything that depended on the old one, so nothing can be
+  // saved against a site that is no longer selected.
+  function chooseClient(id: string) {
+    setClientId(id);
+    setSites([]);
+    chooseSite('');
+  }
+  function chooseSite(id: string) {
+    setSiteId(id);
+    setSubProjectId('');
+    setSubProjects([]); setPos([]); setPis([]);
+    setInvoices([]); setSettlement({}); setDeductionsByInvoice({});
+    setShowNewInvoice(false); setDeductionFormInvoiceId(null);
+  }
+
   useEffect(() => {
-    if (!clientId) { setSites([]); setSiteId(''); return; }
+    if (!clientId) return;
+    let alive = true;
     supabase.from('site').select('*').eq('client_id', clientId).order('site_name').then(({ data, error }) => {
+      if (!alive) return;
       if (error) setError(friendlyError(error)); else setSites(data as Site[]);
     });
+    return () => { alive = false; };
   }, [clientId]);
 
   useEffect(() => {
-    if (!siteId) { setSubProjects([]); setInvoices([]); return; }
-    supabase.from('sub_project').select('*').eq('site_id', siteId).order('name').then(({ data }) => setSubProjects((data ?? []) as SubProject[]));
-    supabase.from('purchase_order').select('*').eq('site_id', siteId).then(({ data }) => setPos((data ?? []) as PurchaseOrder[]));
-    supabase.from('proforma_invoice').select('*').eq('site_id', siteId).then(({ data }) => setPis((data ?? []) as ProformaInvoice[]));
-    loadInvoices();
-  }, [siteId, subProjectId]);
-
-  function loadInvoices() {
-    let q = supabase.from('tax_invoice').select('*').eq('site_id', siteId);
-    q = subProjectId ? q.eq('sub_project_id', subProjectId) : q;
-    q.order('invoice_date', { ascending: false }).then(async ({ data, error }) => {
-      if (error) { setError(friendlyError(error)); return; }
-      const invs = data as TaxInvoice[];
-      setInvoices(invs);
-      if (invs.length > 0) {
-        const ids = invs.map((i) => i.invoice_id);
-        const { data: settleData } = await supabase.from('v_invoice_settlement').select('*').in('invoice_id', ids);
-        const map: Record<string, InvoiceSettlementRow> = {};
-        (settleData as InvoiceSettlementRow[] ?? []).forEach((r) => { map[r.invoice_id] = r; });
-        setSettlement(map);
-
-        const { data: dedData } = await supabase.from('deduction').select('*').in('invoice_id', ids);
-        const dmap: Record<string, Deduction[]> = {};
-        (dedData as Deduction[] ?? []).forEach((d) => {
-          dmap[d.invoice_id] = [...(dmap[d.invoice_id] ?? []), d];
-        });
-        setDeductionsByInvoice(dmap);
-      }
+    if (!siteId) return;
+    let alive = true;
+    Promise.all([
+      supabase.from('sub_project').select('*').eq('site_id', siteId).order('name'),
+      supabase.from('purchase_order').select('*').eq('site_id', siteId).order('po_date'),
+      supabase.from('proforma_invoice').select('*').eq('site_id', siteId).order('pi_date'),
+    ]).then(([sp, po, pi]) => {
+      if (!alive) return;
+      const failed = [sp, po, pi].find((r) => r.error);
+      if (failed?.error) { setError(friendlyError(failed.error)); return; }
+      setSubProjects((sp.data ?? []) as SubProject[]);
+      setPos((po.data ?? []) as PurchaseOrder[]);
+      setPis((pi.data ?? []) as ProformaInvoice[]);
     });
+    return () => { alive = false; };
+  }, [siteId]);
+
+  // Each load gets a number; a reply to an older load (an earlier site) is ignored.
+  const loadSeq = useRef(0);
+  async function loadInvoices(forSite = siteId, forSub = subProjectId) {
+    const seq = ++loadSeq.current;
+    if (!forSite) return;
+    let q = supabase.from('tax_invoice').select('*').eq('site_id', forSite);
+    q = forSub ? q.eq('sub_project_id', forSub) : q;
+    const { data, error } = await q.order('invoice_date', { ascending: false });
+    if (seq !== loadSeq.current) return;
+    if (error) { setError(friendlyError(error)); return; }
+    const invs = data as TaxInvoice[];
+    const ids = invs.map((i) => i.invoice_id);
+    const [settleRes, dedRes] = ids.length
+      ? await Promise.all([
+          supabase.from('v_invoice_settlement').select('*').in('invoice_id', ids),
+          supabase.from('deduction').select('*').in('invoice_id', ids),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }];
+    if (seq !== loadSeq.current) return;
+    if (settleRes.error || dedRes.error) { setError(friendlyError(settleRes.error ?? dedRes.error)); return; }
+    const map: Record<string, InvoiceSettlementRow> = {};
+    ((settleRes.data ?? []) as InvoiceSettlementRow[]).forEach((r) => { map[r.invoice_id] = r; });
+    const dmap: Record<string, Deduction[]> = {};
+    ((dedRes.data ?? []) as Deduction[]).forEach((d) => { dmap[d.invoice_id] = [...(dmap[d.invoice_id] ?? []), d]; });
+    setInvoices(invs);
+    setSettlement(map);
+    setDeductionsByInvoice(dmap);
   }
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading data for the chosen site is this effect's job
+    loadInvoices(siteId, subProjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId, subProjectId]);
 
   const selectedSite = sites.find((s) => s.site_id === siteId);
 
@@ -101,8 +139,8 @@ export default function InvoicesPage() {
 
       <div className="px-6 py-6 lg:px-8">
         <div className="card mb-6 grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
-          <FieldSelect label="Client" value={clientId} onChange={setClientId} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
-          <FieldSelect label="Site" value={siteId} onChange={setSiteId} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
+          <FieldSelect label="Client" value={clientId} onChange={chooseClient} options={clients.map((c) => ({ value: c.client_id, label: c.display_name }))} />
+          <FieldSelect label="Site" value={siteId} onChange={chooseSite} options={sites.map((s) => ({ value: s.site_id, label: s.site_name }))} />
           {selectedSite?.has_sub_projects && (
             <FieldSelect label="Sub-Project (optional)" value={subProjectId} onChange={setSubProjectId} options={subProjects.map((sp) => ({ value: sp.sub_project_id, label: sp.name }))} />
           )}
@@ -203,12 +241,16 @@ function NewInvoiceForm({
   const [submitting, setSubmitting] = useState(false);
 
   const gross = (Number(taxableValue) || 0) + (Number(gstAmount) || 0);
-  const [poLeft, setPoLeft] = useState<number | null>(null);
+  // "Left to bill" for the chosen PO; kept with the PO it belongs to, so a stale figure never shows.
+  const [poLeftFor, setPoLeftFor] = useState<{ poId: string; left: number | null }>({ poId: '', left: null });
   useEffect(() => {
-    if (!poId) { setPoLeft(null); return; }
+    if (!poId) return;
+    let alive = true;
     supabase.from('v_po_summary').select('yet_to_invoice').eq('po_id', poId).maybeSingle()
-      .then(({ data }) => setPoLeft(data ? Number(data.yet_to_invoice) : null));
+      .then(({ data, error }) => { if (alive && !error) setPoLeftFor({ poId, left: data ? Number(data.yet_to_invoice) : null }); });
+    return () => { alive = false; };
   }, [poId]);
+  const poLeft = poId && poLeftFor.poId === poId ? poLeftFor.left : null;
   const overPo = poLeft !== null && gross > poLeft + 0.5;
 
   async function submit() {

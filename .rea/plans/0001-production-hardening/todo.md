@@ -47,7 +47,7 @@ Status: done
 Files: `src/app/invoices/page.tsx`, `src/app/payments/page.tsx`, `src/app/po-pi/page.tsx`, `src/app/master-data/page.tsx`, `src/app/site/page.tsx`, `src/app/site/statement/page.tsx`, `src/app/document/page.tsx`, `src/lib/audit.ts`, `src/lib/documents.ts`, `e2e/flows.mjs`
 Done when: client/site switches reset dependents (M1) without set-state-in-effect; every Supabase call checks `error` (M4); failed inserts discard uploaded files (M5); stale responses ignored (M6); payments drawer can't crash (H7); converted PI status locked in the UI (M17); e2e covers create/edit PO, PI, invoice, payment + matching on local Supabase.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U12 — Money entry: GST, TDS date, retention release, validation
 

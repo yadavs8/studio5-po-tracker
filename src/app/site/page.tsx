@@ -7,12 +7,11 @@ import { supabase } from '@/lib/supabase';
 import { countsAsBilled } from '@/lib/statement';
 import { uploadDocument } from '@/lib/documents';
 import { updateWithAudit } from '@/lib/audit';
-import { friendlyError } from '@/lib/plain';
 import { formatINR, formatDate } from '@/lib/format';
 import { FileSpreadsheet, ArrowLeft, Pencil, UploadCloud, FolderOpen } from 'lucide-react';
 import { DocumentList } from '@/components/DocumentList';
 import { PageHeader, ErrorBanner, EmptyState, Panel, DataTable, Td, StatusBadge, StatTile, buttonClass, FormShell, FieldInput, FieldSelect, FieldFile } from '@/lib/ui';
-import { WORDS, HELP } from '@/lib/plain';
+import { WORDS, HELP, friendlyError, isUuid } from '@/lib/plain';
 import type { SiteDashboardRow } from '@/lib/types';
 import { confirmBeforeStart, REPORTING_START_LABEL } from '@/lib/period';
 
@@ -43,9 +42,15 @@ function SitePageInner() {
   const [editing, setEditing] = useState<{ kind: EditKind; id: string } | null>(null);
   const [docsKey, setDocsKey] = useState(0);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when the site in the link changes
   useEffect(() => { load(); }, [id]);
 
   function load() {
+    if (!isUuid(id)) {
+      setError('This link is not valid: it does not point at a site. Please open the site again from the Overview.');
+      setLoading(false);
+      return;
+    }
     (async () => {
       const q = await Promise.all([
         supabase.from('site').select('site_name, client:client_id(display_name)').eq('site_id', id).single(),
@@ -57,7 +62,7 @@ function SitePageInner() {
         supabase.from('payment').select('*').eq('site_id', id).order('payment_date'),
       ]);
       const failed = q.find((r) => r.error);
-      if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
+      if (failed?.error) { setError(friendlyError(failed.error)); setLoading(false); return; }
       const s = q[0].data as unknown as { site_name: string; client: { display_name: string } | null };
       setSite({ site_name: s.site_name, client: s.client?.display_name ?? '' });
       setDash((q[1].data as SiteDashboardRow) ?? null);
@@ -69,7 +74,7 @@ function SitePageInner() {
       setPays(payRows);
       if (payRows.length) {
         const { data: a, error: ae } = await supabase.from('payment_allocation').select('payment_id,invoice_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
-        if (ae) setError(ae.message); else setAllocs((a ?? []) as AllocRow[]);
+        if (ae) setError(friendlyError(ae)); else setAllocs((a ?? []) as AllocRow[]);
       }
       setLoading(false);
     })();
@@ -352,7 +357,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
       Object.entries(data).forEach(([k, v]) => { f[k] = v == null ? '' : String(v); });
       setForm(f);
     });
-  }, [kind, id]);
+  }, [cfg.table, cfg.idField, id]);
 
   const set = (k: string) => (v: string) => setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -385,11 +390,14 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
 
     const { error } = await updateWithAudit(cfg.table, cfg.idField, id, patch);
     setSubmitting(false);
-    if (error) { setSaveError(friendlyError(error)); return; }
-    if (newDocId && oldDocId) {
-      const { discardDocument } = await import('@/lib/documents');
-      await discardDocument(oldDocId);
+    const { discardDocument } = await import('@/lib/documents');
+    if (error) {
+      // Not saved: the newly uploaded file must not linger unfiled.
+      if (newDocId) await discardDocument(newDocId).catch(() => undefined);
+      setSaveError(friendlyError(error));
+      return;
     }
+    if (newDocId && oldDocId) await discardDocument(oldDocId);
     onSaved();
   }
 
@@ -424,10 +432,18 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                 <FieldInput label="PI Date" type="date" value={form.pi_date ?? ''} onChange={set('pi_date')} />
                 <FieldInput label="Amount" type="number" value={form.amount ?? ''} onChange={set('amount')} />
                 <FieldInput label="Submitted Date" type="date" value={form.submitted_date ?? ''} onChange={set('submitted_date')} />
-                <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
-                  { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
-                  { value: 'approved', label: 'Approved' }, { value: 'converted_to_invoice', label: 'Converted to Invoice' },
-                ]} />
+                {row?.status === 'converted_to_invoice' ? (
+                  // A PI that became a tax invoice stays that way (the database refuses changes too).
+                  <div className="text-sm">
+                    <div className="mb-1 text-xs font-medium text-slate-500">Status</div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Converted to a tax invoice</div>
+                  </div>
+                ) : (
+                  <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
+                    { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
+                    { value: 'approved', label: 'Approved' },
+                  ]} />
+                )}
                 <FieldInput label="Subject" value={form.subject ?? ''} onChange={set('subject')} full />
                 <FieldInput label="Work status / remarks" value={form.remarks ?? ''} onChange={set('remarks')} full />
               </>

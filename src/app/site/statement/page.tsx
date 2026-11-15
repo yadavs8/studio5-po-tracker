@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { formatINR, formatDate } from '@/lib/format';
 import { ErrorBanner, EmptyState } from '@/lib/ui';
+import { friendlyError, isUuid } from '@/lib/plain';
 import { documentUrl } from '@/lib/documents';
 import { inPeriod, loadBroughtForward, REPORTING_START, REPORTING_START_LABEL, type BroughtForward } from '@/lib/period';
 import { statementFigures } from '@/lib/statement';
@@ -50,6 +51,10 @@ function StatementPageInner() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!isUuid(id)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- a bad link is known before any request
+      setError('This link is not valid: it does not point at a site.'); setLoading(false); return;
+    }
     (async () => {
       const q = await Promise.all([
         supabase.from('site').select('site_name, client:client_id(display_name)').eq('site_id', id).single(),
@@ -61,15 +66,17 @@ function StatementPageInner() {
         supabase.from('proforma_invoice').select('pi_id,po_id,sub_project_id,pi_number,pi_date,amount,subject,remarks,status,converted_invoice_id,document_id').eq('site_id', id).order('pi_date'),
       ]);
       const failed = q.find((r) => r.error);
-      if (failed?.error) { setError(failed.error.message); setLoading(false); return; }
+      if (failed?.error) { setError(friendlyError(failed.error)); setLoading(false); return; }
       const s = q[0].data as unknown as { site_name: string; client: { display_name: string } | null };
       setSiteName(s.site_name); setClient(s.client?.display_name ?? '');
       setAllPos((q[1].data ?? []) as Po[]);
       const invRows = (q[2].data ?? []) as Inv[];
       setAllInvs(invRows);
-      try { setBf((await loadBroughtForward(id))[id] ?? null); } catch (e) { setError((e as Error).message); }
+      try { setBf((await loadBroughtForward(id))[id] ?? null); } catch (e) { setError(friendlyError(e as Error)); }
       if (invRows.length) {
-        const { data: d } = await supabase.from('deduction').select('invoice_id,deduction_type,amount,status').in('invoice_id', invRows.map((i) => i.invoice_id));
+        const { data: d, error: dErr } = await supabase.from('deduction').select('invoice_id,deduction_type,amount,status').in('invoice_id', invRows.map((i) => i.invoice_id));
+        // A statement with TDS silently missing would be wrong, so stop and say so.
+        if (dErr) { setError(friendlyError(dErr)); setLoading(false); return; }
         setDeds((d ?? []) as Ded[]);
       }
       setSettle(Object.fromEntries(((q[3].data ?? []) as Settle[]).map((r) => [r.invoice_id, r])));
@@ -78,7 +85,8 @@ function StatementPageInner() {
       setSubs((q[5].data ?? []) as Sub[]);
       setAllPis((q[6].data ?? []) as Pi[]);
       if (payRows.length) {
-        const { data: a } = await supabase.from('payment_allocation').select('payment_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
+        const { data: a, error: aErr } = await supabase.from('payment_allocation').select('payment_id,amount_allocated').in('payment_id', payRows.map((p) => p.payment_id));
+        if (aErr) { setError(friendlyError(aErr)); setLoading(false); return; }
         const m: Record<string, number> = {};
         ((a ?? []) as Alloc[]).forEach((x) => { m[x.payment_id] = (m[x.payment_id] ?? 0) + n(x.amount_allocated); });
         setAllocByPay(m);
@@ -121,9 +129,9 @@ function StatementPageInner() {
   async function openPiFile(p: Pi) {
     if (!p.document_id) return;
     setOpeningPi(p.pi_id);
-    const url = await documentUrl(p.document_id);
+    const url = await documentUrl(p.document_id).catch(() => null);
     setOpeningPi(null);
-    if (url) window.open(url, '_blank', 'noopener');
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
     else setError(`Could not open the file for PI ${p.pi_number}.`);
   }
 

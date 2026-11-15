@@ -27,11 +27,13 @@ export interface AuditEntry {
 
 /** Fetches the change history for one record, most recent first. */
 export async function getHistory(table: string, recordId: string): Promise<AuditEntry[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('audit_log')
     .select('audit_id, field_changed, old_value, new_value, changed_at, reason')
     .eq('table_name', table)
     .eq('record_id', recordId)
     .order('changed_at', { ascending: false });
+  // Throw rather than show an empty history when the request failed.
+  if (error) throw new Error(error.message);
   return (data ?? []) as AuditEntry[];
 }

@@ -6,7 +6,7 @@ import { Search, Pencil, ExternalLink, ArrowRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { formatDate } from '@/lib/format';
 import { inPeriod } from '@/lib/period';
-import { friendlyError } from '@/lib/plain';
+import { friendlyError, isUuid } from '@/lib/plain';
 import {
   listDocuments,
   fileDocument,
@@ -65,9 +65,11 @@ export function DocumentList({ siteId, initialSite = '' }: { siteId?: string; in
 
   useEffect(() => {
     let alive = true;
+    // A bad site id in the link: the page around this list already says so; ask the database nothing.
+    if (siteId !== undefined && !isUuid(siteId)) return;
     listDocuments(siteId)
       .then((rows) => alive && setDocs(rows))
-      .catch((e: Error) => alive && setError(e.message));
+      .catch((e: Error) => alive && setError(friendlyError(e)));
     return () => {
       alive = false;
     };

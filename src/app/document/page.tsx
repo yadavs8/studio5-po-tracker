@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { documentInfo, documentUrl, documentDownloadUrl } from '@/lib/documents';
 import { PageHeader, ErrorBanner, PrimaryButton, buttonClass } from '@/lib/ui';
+import { friendlyError, isUuid } from '@/lib/plain';
 import { ArrowLeft, Download, ExternalLink, FileQuestion } from 'lucide-react';
 
 function DocumentPageInner() {
@@ -17,12 +18,9 @@ function DocumentPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
+  const validId = isUuid(id);
   useEffect(() => {
-    if (!id) {
-      setError('No document ID specified.');
-      setLoading(false);
-      return;
-    }
+    if (!validId) return; // handled in render: no request for a bad link
 
     async function load() {
       setLoading(true);
@@ -40,22 +38,22 @@ function DocumentPageInner() {
           setSignedUrl(url);
         }
       } catch (err) {
-        setError((err as Error).message);
+        setError(friendlyError(err as Error));
       } finally {
         setLoading(false);
       }
     }
 
     load();
-  }, [id]);
+  }, [id, validId]);
 
   async function handleOpenNewTab() {
     if (!id) return;
     try {
       const freshUrl = await documentUrl(id);
-      if (freshUrl) window.open(freshUrl, '_blank');
+      if (freshUrl) window.open(freshUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
-      console.error('Error opening document:', err);
+      setError(`Could not open the file: ${friendlyError(err as Error)}`);
     }
   }
 
@@ -73,7 +71,7 @@ function DocumentPageInner() {
         document.body.removeChild(a);
       }
     } catch (err) {
-      console.error('Download error:', err);
+      setError(`Could not download the file: ${friendlyError(err as Error)}`);
     } finally {
       setDownloading(false);
     }
@@ -81,6 +79,8 @@ function DocumentPageInner() {
 
   const isImage = info ? ['png', 'jpg', 'jpeg', 'webp'].includes(info.ext) : false;
   const isPdf = info?.ext === 'pdf';
+
+  const shownError = !validId ? 'This link is not valid: it does not point at a document. Please open it again from the documents list.' : error;
 
   return (
     <div className="pb-12">
@@ -107,7 +107,7 @@ function DocumentPageInner() {
           ) : undefined
         }
       />
-      {error && <ErrorBanner message={error} />}
+      {shownError && <ErrorBanner message={shownError} />}
 
       <div className="space-y-4 px-6 py-6 lg:px-8">
         <button
@@ -117,7 +117,7 @@ function DocumentPageInner() {
           <ArrowLeft size={15} /> Back
         </button>
 
-        {loading ? (
+        {validId && loading ? (
           <div className="card space-y-4 p-8">
             <div className="skeleton h-8 w-1/4" />
             <div className="skeleton h-[calc(100vh-240px)] w-full" />
@@ -136,6 +136,7 @@ function DocumentPageInner() {
           </div>
         ) : isImage ? (
           <div className="card flex items-center justify-center p-6">
+            {/* eslint-disable-next-line @next/next/no-img-element -- a short-lived signed URL in a static export: next/image cannot optimise it */}
             <img
               src={signedUrl}
               alt={title}

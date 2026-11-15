@@ -105,9 +105,12 @@ export async function uploadDocument(
 
 /** Short-lived signed link for opening a stored document. */
 export async function documentUrl(documentId: string): Promise<string | null> {
-  const { data: doc } = await supabase.from('document').select('file_url').eq('document_id', documentId).single();
+  // null = no such document; a failed request throws, so it is never mistaken for "not found".
+  const { data: doc, error } = await supabase.from('document').select('file_url').eq('document_id', documentId).maybeSingle();
+  if (error) throw new Error(error.message);
   if (!doc) return null;
-  const { data } = await supabase.storage.from(DOCUMENT_BUCKET).createSignedUrl(doc.file_url, 300);
+  const { data, error: sErr } = await supabase.storage.from(DOCUMENT_BUCKET).createSignedUrl(doc.file_url, 300);
+  if (sErr) throw new Error(sErr.message);
   return data?.signedUrl ?? null;
 }
 
@@ -116,7 +119,8 @@ export async function documentUrl(documentId: string): Promise<string | null> {
  * and lower-case extension.
  */
 export async function documentInfo(documentId: string): Promise<{ path: string; fileName: string; ext: string } | null> {
-  const { data: doc } = await supabase.from('document').select('file_url, file_name').eq('document_id', documentId).single();
+  const { data: doc, error } = await supabase.from('document').select('file_url, file_name').eq('document_id', documentId).maybeSingle();
+  if (error) throw new Error(error.message);
   if (!doc?.file_url) return null;
   const fileName = (doc.file_name as string | null) || fileNameFromPath(doc.file_url);
   return { path: doc.file_url, fileName, ext: fileExt(fileName) };
@@ -129,7 +133,8 @@ export async function documentInfo(documentId: string): Promise<{ path: string; 
 export async function documentDownloadUrl(documentId: string): Promise<string | null> {
   const info = await documentInfo(documentId);
   if (!info) return null;
-  const { data } = await supabase.storage.from(DOCUMENT_BUCKET).createSignedUrl(info.path, 300, { download: info.fileName });
+  const { data, error } = await supabase.storage.from(DOCUMENT_BUCKET).createSignedUrl(info.path, 300, { download: info.fileName });
+  if (error) throw new Error(error.message);
   return data?.signedUrl ?? null;
 }
 

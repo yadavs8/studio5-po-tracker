@@ -349,10 +349,12 @@ export function FieldInput({
   type?: string;
   full?: boolean;
 }) {
+  const id = React.useId();
   return (
     <div className={full ? 'sm:col-span-2' : ''}>
-      <label className="block text-xs font-medium text-slate-600">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={INPUT} />
+      <label htmlFor={id} className="block text-xs font-medium text-slate-600">{label}</label>
+      <input id={id} type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={INPUT}
+        inputMode={type === 'number' ? 'decimal' : undefined} step={type === 'number' ? 'any' : undefined} />
     </div>
   );
 }
@@ -370,10 +372,11 @@ export function FieldSelect({
   options: { value: string; label: string }[];
   full?: boolean;
 }) {
+  const id = React.useId();
   return (
     <div className={full ? 'sm:col-span-2' : ''}>
-      <label className="block text-xs font-medium text-slate-600">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
+      <label htmlFor={id} className="block text-xs font-medium text-slate-600">{label}</label>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
         <option value="">Select…</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -392,10 +395,12 @@ export function FieldFile({
   onChange: (f: File | null) => void;
   full?: boolean;
 }) {
+  const id = React.useId();
   return (
     <div className={full ? 'sm:col-span-2' : ''}>
-      <label className="block text-xs font-medium text-slate-600">{label}</label>
+      <label htmlFor={id} className="block text-xs font-medium text-slate-600">{label}</label>
       <input
+        id={id}
         type="file"
         accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx"
         onChange={(e) => onChange(e.target.files?.[0] ?? null)}

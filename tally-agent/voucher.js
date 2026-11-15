@@ -1,4 +1,4 @@
-// Pure voucher-building helpers (no network). Tested by test-voucher.js. Keep in step with src/lib/tally.ts in the app.
+// Pure voucher-building helpers (no network). Tested by test-voucher.js. (The app itself builds no vouchers; this agent is the only place.)
 
 export const r2 = (n) => Math.round(Number(n) * 100) / 100;
 export const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -15,6 +15,9 @@ export function linesFor(rec, s) {
       if (i.gst_type === 'cgst_sgst') { const h = r2(gst / 2); L.push({ ledger: s.cgst_ledger, dr: false, amount: h }, { ledger: s.sgst_ledger, dr: false, amount: r2(gst - h) }); }
       else L.push({ ledger: s.igst_ledger, dr: false, amount: gst });
     }
+    // Rounded to the rupee (doc generator invoices, migration_017): gross = taxable + GST + round off.
+    const ro = r2(i.round_off ?? 0);
+    if (ro !== 0) L.push({ ledger: s.round_off_ledger || 'Round Off', dr: ro < 0, amount: Math.abs(ro) });
     return L;
   }
   if (rec.type === 'payment') {

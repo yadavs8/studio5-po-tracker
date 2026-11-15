@@ -19,6 +19,7 @@ import {
   FieldSelect,
   FieldFile, buttonClass } from '@/lib/ui';
 import { uploadDocument, discardDocument } from '@/lib/documents';
+import { isOpenPi } from '@/lib/pi';
 
 const DEDUCTION_TYPES: { value: DeductionType; label: string }[] = [
   { value: 'tds', label: 'Tax deducted by client (TDS)' },
@@ -288,7 +289,7 @@ function NewInvoiceForm({
       <FieldInput label="Taxable Value" type="number" value={taxableValue} onChange={setTaxableValue} />
       <FieldInput label="GST Amount (0 if none)" type="number" value={gstAmount} onChange={setGstAmount} />
       <FieldSelect label="Linked PO (optional)" value={poId} onChange={setPoId} options={pos.map((p) => ({ value: p.po_id, label: p.po_number }))} />
-      <FieldSelect label="Linked PI (optional)" value={piId} onChange={setPiId} options={pis.map((p) => ({ value: p.pi_id, label: p.pi_number }))} />
+      <FieldSelect label="Linked PI (optional)" value={piId} onChange={setPiId} options={pis.filter((p) => isOpenPi(p.status)).map((p) => ({ value: p.pi_id, label: p.pi_number }))} />
       <FieldFile onChange={setFile} />
       <div className="col-span-2 font-mono text-sm text-slate-500">Invoice total (taxable + GST): {formatINR(gross)}</div>
       {poLeft !== null && (

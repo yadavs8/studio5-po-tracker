@@ -9,7 +9,7 @@ Next.js + Supabase. Static site on GitHub Pages: https://yadavs8.github.io/studi
 3. `npm run dev` then open http://localhost:3000
 
 ## Database (Supabase SQL editor, in this order, once)
-`supabase/studio5_schema.sql`, then `migration_002.sql` … `migration_016_*.sql` in number order (`migration_006.sql` runs in two steps, see its header; `migration_013` needs the staff email line, see below).
+`supabase/studio5_schema.sql`, then `migration_002.sql` … `migration_017_*.sql` in number order (`migration_006.sql` runs in two steps, see its header; `migration_013` needs the staff email line, see below).
 The old, unrelated model is kept in `supabase/archive/` only for reference — never run it.
 Create the login user under Authentication → Users and **switch off public sign-ups** (Authentication → Sign In / Providers).
 
@@ -29,6 +29,12 @@ Each step is safe to run again. The current site keeps working after every step,
 6. In the current (old) site click **Sign out** once — this clears its site-wide login cookie. Then merge the pull request into `main`; GitHub Pages redeploys the site, and everyone signs in again.
 7. Open the site, sign in, and check a site page and its Account statement.
 Each migration's header says exactly what it changes and how to roll it back.
+
+### Linking the doc generator (migration 017)
+1. SQL editor — `migration_017_doc_generator_link.sql` (safe to run again).
+2. In Tally, create a `Round Off` ledger (or change the name on the tracker's Tally page), then pull this repo on the Tally PC so the agent books round offs.
+3. Merge this repo's pull request, then the doc generator's. From then on a PI or tax invoice made in the doc generator with a site picked appears here under that site, with its file (decision 0011).
+
 
 ## Tests
 - `npm test` — unit tests (vitest). `npm run typecheck`, `npm run lint`.

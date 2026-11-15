@@ -458,7 +458,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                 ) : (
                   <FieldSelect label="Status" value={form.status ?? ''} onChange={set('status')} options={[
                     { value: 'draft', label: 'Draft' }, { value: 'sent', label: 'Sent' }, { value: 'revision_requested', label: 'Revision Requested' },
-                    { value: 'approved', label: 'Approved' },
+                    { value: 'approved', label: 'Approved' }, { value: 'cancelled', label: 'Cancelled' },
                   ]} />
                 )}
                 <FieldInput label="Subject" value={form.subject ?? ''} onChange={set('subject')} full />
@@ -477,7 +477,7 @@ function EditDrawer({ kind, id, onClose, onSaved }: { kind: EditKind; id: string
                   { value: 'draft', label: 'Draft' }, { value: 'issued', label: 'Issued' }, { value: 'partially_settled', label: 'Partially Settled' },
                   { value: 'fully_settled', label: 'Fully Settled' }, { value: 'disputed', label: 'Disputed' }, { value: 'cancelled', label: 'Cancelled' },
                 ]} />
-                <p className="col-span-2 font-sans text-xs text-red-600">Note: taxable value + GST must still equal the gross value (within a few paise), or the save will be rejected.</p>
+                <p className="col-span-2 font-sans text-xs text-red-600">Note: taxable value + GST (+ any round off) must still equal the gross value (within a few paise), or the save will be rejected.</p>
               </>
             )}
             {kind === 'payment' && (

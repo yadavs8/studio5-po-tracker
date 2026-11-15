@@ -11,6 +11,7 @@ import { friendlyError, isUuid } from '@/lib/plain';
 import { documentUrl } from '@/lib/documents';
 import { inPeriod, loadBroughtForward, REPORTING_START, REPORTING_START_LABEL, type BroughtForward } from '@/lib/period';
 import { statementFigures } from '@/lib/statement';
+import { isOpenPi, PI_STATUS_LABEL } from '@/lib/pi';
 
 interface Po { po_id: string; po_number: string; po_date: string; scope_description: string | null; po_value: number; invoiced: number; received_bank: number; tds_and_other_deductions: number; retention_pending: number; balance_against_po: number; }
 interface Inv { invoice_id: string; po_id: string | null; sub_project_id: string | null; invoice_number: string; invoice_date: string; taxable_value: number; gst_amount: number | null; gross_invoice_value: number; status: string; }
@@ -23,13 +24,7 @@ interface Pi { pi_id: string; po_id: string | null; sub_project_id: string | nul
 
 const n = (v: unknown) => Number(v ?? 0);
 
-const PI_STATUS: Record<string, string> = {
-  draft: 'Draft',
-  sent: 'Sent to client',
-  revision_requested: 'Client asked for changes',
-  approved: 'Approved by client',
-  converted_to_invoice: 'Tax invoice raised',
-};
+const PI_STATUS: Record<string, string> = PI_STATUS_LABEL;
 const sum = <T,>(a: T[], f: (x: T) => number) => a.reduce((s, x) => s + f(x), 0);
 
 function StatementPageInner() {
@@ -63,7 +58,7 @@ function StatementPageInner() {
         supabase.from('v_invoice_settlement').select('invoice_id,total_payments_allocated,total_deducted,remaining_balance').eq('site_id', id),
         supabase.from('payment').select('payment_id,po_id,payment_date,amount_received,payment_type,utr_or_reference,remarks').eq('site_id', id).order('payment_date'),
         supabase.from('sub_project').select('sub_project_id,name').eq('site_id', id),
-        supabase.from('proforma_invoice').select('pi_id,po_id,sub_project_id,pi_number,pi_date,amount,subject,remarks,status,converted_invoice_id,document_id').eq('site_id', id).order('pi_date'),
+        supabase.from('proforma_invoice').select('pi_id,po_id,sub_project_id,pi_number,pi_date,amount,subject,remarks,status,converted_invoice_id,document_id').eq('site_id', id).neq('status', 'cancelled').order('pi_date'), // a cancelled PI is not part of the client's statement
       ]);
       const failed = q.find((r) => r.error);
       if (failed?.error) { setError(friendlyError(failed.error)); setLoading(false); return; }
@@ -122,7 +117,7 @@ function StatementPageInner() {
   // the remarks are the line and the note column stays empty.
   const piParticulars = (p: Pi) => (p.subject ? `PI for ${p.subject}` : p.remarks || 'Proforma invoice');
   const piNote = (p: Pi) => (p.subject ? p.remarks ?? '' : '');
-  const piOpen = pis.filter((p) => p.status !== 'converted_to_invoice');
+  const piOpen = pis.filter((p) => isOpenPi(p.status));
   const piTotals = { all: sum(pis, (p) => n(p.amount)), open: sum(piOpen, (p) => n(p.amount)) };
   const [openingPi, setOpeningPi] = useState<string | null>(null);
 

@@ -16,6 +16,7 @@ import {
   MAX_UPLOAD_BYTES,
 } from '@/lib/documents';
 import { detectDocument, fromExtracted, findExistingRecord, SiteMeta, DetectedDocument, ExistingRecord } from '@/lib/detector';
+import { resolveGst } from '@/lib/money';
 import { readDocument, readableType, closeInboxItem } from '@/lib/extractApi';
 import { PageHeader, ErrorBanner, Panel, PrimaryButton, GhostButton, FieldInput, FieldSelect } from '@/lib/ui';
 import {
@@ -118,7 +119,7 @@ function UploadPageInner() {
   const [siteLists, setSiteLists] = useState<{ siteId: string; pos: SitePoOpt[]; pis: SitePiOpt[] }>({ siteId: '', pos: [], pis: [] });
 
   // A PO / PI / tax invoice with the same number on the same site, which this upload can replace.
-  const [existingLookup, setExistingLookup] = useState<{ key: string; rec: ExistingRecord | null }>({ key: '', rec: null });
+  const [existingLookup, setExistingLookup] = useState<{ key: string; rec: ExistingRecord | null; error?: string }>({ key: '', rec: null });
   const [overrideChoice, setOverrideChoice] = useState<boolean | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
@@ -187,21 +188,35 @@ function UploadPageInner() {
   useEffect(() => {
     if (!lookupKey) return;
     const [type, site, num] = lookupKey.split('|');
+    let alive = true;
     const timer = setTimeout(async () => {
-      const rec = await findExistingRecord(type as UploadDocType, num, site);
-      setExistingLookup({ key: lookupKey, rec });
+      try {
+        const rec = await findExistingRecord(type as UploadDocType, num, site);
+        if (alive) setExistingLookup({ key: lookupKey, rec });
+      } catch (e) {
+        if (alive) setExistingLookup({ key: lookupKey, rec: null, error: friendlyError(e as Error) });
+      }
     }, 350);
-    return () => clearTimeout(timer);
+    return () => { alive = false; clearTimeout(timer); };
   }, [lookupKey]);
+  // Saving waits for this check: saving before it answers could create a second record with the same number.
+  const lookupPending = !!lookupKey && existingLookup.key !== lookupKey;
+  const lookupError = lookupKey && existingLookup.key === lookupKey ? existingLookup.error ?? null : null;
   const existing = lookupKey && existingLookup.key === lookupKey ? existingLookup.rec : null;
-  const isOverride = !!existing && (overrideChoice ?? true);
+  // Replacing deletes the old file, so it is never the default: the person must tick it.
+  const isOverride = !!existing && overrideChoice === true;
 
   // PO link: what the person picked, else the PO whose number the AI read off the document
   const autoPoId =
     poReference && sitePos.find((p) => p.po_number.trim().toLowerCase() === poReference.toLowerCase())?.po_id;
   const poId = linkedPoId ?? autoPoId ?? '';
 
+  // The latest site, for code that runs after an await (the AI reading) and would otherwise see an old value.
+  const siteIdRef = useRef(siteId);
+  useEffect(() => { siteIdRef.current = siteId; }, [siteId]);
+
   function chooseSite(id: string) {
+    siteIdRef.current = id;
     setSiteId(id);
     setLinkedPoId(null);
     setSelectedPiIds([]);
@@ -222,7 +237,8 @@ function UploadPageInner() {
     // A fresh file refills everything except a site the person already chose (or came from).
     const t = onlyUntouched ? touched.current : new Set<FieldKey>([...touched.current].filter((k) => k === 'site'));
     if (!t.has('docType')) setDocType(d.docType);
-    if (!t.has('site') && d.siteId) chooseSite(d.siteId);
+    // Only switch site when it actually changes: re-choosing the same site would clear the PO / PI picked for it.
+    if (!t.has('site') && d.siteId && d.siteId !== siteIdRef.current) chooseSite(d.siteId);
     if (!t.has('docNumber') && (d.docNumber || !onlyUntouched)) setDocNumber(d.docNumber);
     if (!t.has('docDate') && (d.date || !onlyUntouched)) setDocDate(d.date);
     if (!t.has('amount') && (d.amount != null || !onlyUntouched)) setAmount(d.amount != null ? String(d.amount) : '');
@@ -277,7 +293,8 @@ function UploadPageInner() {
   // When a file is selected: quick guess from the file name at once, then the full AI reading
   async function handleFileSelect(selectedFile: File | null) {
     abandonReading();
-    touched.current = new Set<FieldKey>(presetSite && siteId === presetSite ? ['site'] : []);
+    // A site chosen by hand (or from the link) stays; everything else is refilled from the new file.
+    touched.current = new Set<FieldKey>(siteIdRef.current && (touched.current.has('site') || siteIdRef.current === presetSite) ? ['site'] : []);
     setOverrideChoice(null);
     setPoReference(null);
     setFile(selectedFile);
@@ -308,7 +325,14 @@ function UploadPageInner() {
   const filteredSites = showAllSites ? sites : sites.filter((s) => activeSiteIds.has(s.site_id) || s.site_id === siteId);
   const taxableNum = toNum(taxable);
   const gstNum = toNum(gst);
-  const invoiceTotal = round2((Number.isNaN(taxableNum) ? 0 : taxableNum) + (Number.isNaN(gstNum) ? 0 : gstNum));
+  // GST rule (decision 0004): blank GST is worked out from the total read off the document; never assumed 0.
+  const totalNum = toNum(amount);
+  const gstCheck = resolveGst(
+    Number.isNaN(taxableNum) ? null : taxableNum,
+    gst.trim() === '' || Number.isNaN(gstNum) ? null : gstNum,
+    amount.trim() === '' || Number.isNaN(totalNum) ? null : totalNum,
+  );
+  const invoiceTotal = gstCheck.ok ? gstCheck.gross : round2((Number.isNaN(taxableNum) ? 0 : taxableNum) + (Number.isNaN(gstNum) ? 0 : gstNum));
   const openPis = sitePis.filter((p) => p.status !== 'converted_to_invoice');
   const unlinkedPis = sitePis.filter((p) => !p.po_id);
 
@@ -320,10 +344,15 @@ function UploadPageInner() {
       if (!docNumber.trim()) return 'Please fill in the document number.';
       if (!docDate) return 'Please fill in the document date.';
       if (docType === 'invoice') {
-        if (!(taxableNum > 0)) return 'Please fill in the taxable value (amount before GST).';
         if (gst.trim() && !(gstNum >= 0)) return 'The GST amount is not a valid number.';
+        if (!gstCheck.ok) return gstCheck.error;
       } else if (!(toNum(amount) > 0)) {
         return 'Please fill in the total amount (with GST). It must be above zero.';
+      }
+      if (lookupPending) return 'Still checking whether this number already exists on the site — one moment.';
+      if (lookupError) return `Could not check whether this number already exists: ${lookupError} Please try again.`;
+      if (existing && !isOverride) {
+        return `This site already has ${DOC_TYPE_LABEL[docType].toLowerCase()} ${existing.number}. Tick "Replace it with this copy" to update it, or correct the number.`;
       }
     }
     return null;
@@ -383,6 +412,10 @@ function UploadPageInner() {
       } else if (docType === 'po') {
         if (existing && isOverride) {
           const patch: Record<string, unknown> = { document_id: newDocId, total_value_with_gst: total, po_date: docDate };
+          // The old split no longer matches the new total: keep a split only if it adds up, else clear it.
+          const split = resolveGst(Number.isNaN(taxableNum) ? null : taxableNum, gst.trim() === '' || Number.isNaN(gstNum) ? null : gstNum, total);
+          patch.taxable_value = split.ok && Math.abs(split.gross - total) <= 1 ? split.taxable : null;
+          patch.gst_amount = split.ok && Math.abs(split.gross - total) <= 1 ? split.gst : null;
           if (subject.trim()) patch.scope_description = subject.trim();
           const { error: e } = await supabase.from('purchase_order').update(patch).eq('po_id', existing.id);
           if (e) throw e;
@@ -411,14 +444,15 @@ function UploadPageInner() {
           else linkedCount = selectedPiIds.length;
         }
       } else if (docType === 'invoice') {
-        const g = Number.isNaN(gstNum) ? 0 : round2(gstNum);
+        if (!gstCheck.ok) throw new Error(gstCheck.error);
+        const g = gstCheck.gst;
         if (existing && isOverride) {
           const patch: Record<string, unknown> = {
             document_id: newDocId,
             invoice_date: docDate,
-            taxable_value: round2(taxableNum),
+            taxable_value: gstCheck.taxable,
             gst_amount: g,
-            gross_invoice_value: invoiceTotal,
+            gross_invoice_value: gstCheck.gross,
           };
           if (poId) patch.po_id = poId;
           const { error: e } = await supabase.from('tax_invoice').update(patch).eq('invoice_id', existing.id);
@@ -433,9 +467,9 @@ function UploadPageInner() {
             p_pi_id: invoicePiId || null,
             p_invoice_number: docNumber.trim(),
             p_invoice_date: docDate,
-            p_taxable: round2(taxableNum),
+            p_taxable: gstCheck.taxable,
             p_gst: g,
-            p_gross: invoiceTotal,
+            p_gross: gstCheck.gross,
             p_document_id: newDocId,
           });
           if (e) throw e;
@@ -689,8 +723,8 @@ function UploadPageInner() {
                       </label>
                       {!isOverride && (
                         <p className="mt-1.5 text-xs text-amber-800">
-                          This will be saved as a separate record with the same number. Untick only if it really is a different
-                          document.
+                          Two records cannot share a number on the same site. Tick the box to replace it (the old file is removed),
+                          or correct the number if this is a different document.
                         </p>
                       )}
                     </div>
@@ -876,7 +910,7 @@ function UploadPageInner() {
                 <GhostButton onClick={handleReset} disabled={submitting}>
                   Cancel
                 </GhostButton>
-                <PrimaryButton onClick={handleSubmit} disabled={submitting}>
+                <PrimaryButton onClick={handleSubmit} disabled={submitting || lookupPending}>
                   {submitting ? 'Saving…' : isOverride ? 'Replace and save' : 'Save and file'}
                 </PrimaryButton>
               </div>

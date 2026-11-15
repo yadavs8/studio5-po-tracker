@@ -40,7 +40,7 @@ Status: done
 Files: `src/app/upload/page.tsx`, `src/lib/detector.ts`, `src/lib/detector.test.ts`, `src/lib/money.ts`, `src/lib/money.test.ts`
 Done when: unit tests cover detector type precedence, site tie-break and calendar-date validation (M7); replace requires an explicit choice when a match exists and Save is disabled while lookup is pending, lookup errors surface (H5); a hand-picked site and chosen PO/PI links survive the AI result (H6); replace PO updates taxable/GST too (M16); upload uses the shared GST rule from `money.ts` (H13 upload part, ADR 0004) and the AI path no longer drops the read total.
 Size: 1 smart-zone
-Status: todo
+Status: done
 
 ### U7 — Pages: stale filters, error handling, races, payments crash
 
